@@ -17,6 +17,7 @@ Gemini Watch is a standalone watchOS SwiftUI app that talks directly to the Goog
     ├── gemini-watch.xcodeproj/
     └── gemini-watch Watch App/
         ├── AppSettingsStore.swift
+        ├── AskGeminiIntent.swift
         ├── Branding.swift
         ├── ChatViewModel.swift
         ├── ContentView.swift
@@ -116,6 +117,7 @@ Core responsibilities:
 - `MarkdownParser.swift`: lightweight markdown/math/code parsing with precompiled regexes and a small parse cache.
 - `Speaker.swift`: `AVSpeechSynthesizer` wrapper and markdown cleanup for speech output.
 - `Branding.swift`: shared Gemini gradient and sparkle mark.
+- `AskGeminiIntent.swift`: `AppIntent` (`AskGeminiIntent`) and `AppShortcutsProvider` (`GeminiWatchShortcuts`) for the Action button / Shortcuts flow. Runs headless (`openAppWhenRun = false`), calls `GeminiService` directly, returns plain text (no `ProvidesDialog`/spoken output by design), and logs the exchange into a rolling "Quick Ask (Action Button)" conversation via `PersistenceManager`.
 
 ## Data Flow
 
@@ -201,6 +203,14 @@ Text-to-speech:
 - Keep markdown cleanup in `Speaker.cleanMarkdown`.
 - Pass settings into `Speaker.speak` rather than loading settings inside `Speaker`.
 
+App Intents / Shortcuts:
+
+- `AskGeminiIntent` is a text-in, text-out intent: it must never speak its result (no `ProvidesDialog`/`IntentDialog` on the returned value) — the whole point of the Action-button flow is a silent, on-screen text reply.
+- Keep `openAppWhenRun = false` so an Action-button press stays headless.
+- Do not rename the intent type, its `question` parameter, or the `AppShortcutsProvider` type without a clear reason — existing Shortcuts users built on the watch reference the intent by identity, and renames can break them.
+- Reuse `GeminiService` and `PersistenceManager` rather than duplicating request or storage logic for the intent.
+- Keep the intent's own error handling self-contained: catch and return errors as short text (matching `ChatViewModel`'s error strings) rather than throwing, so a Shortcut run always ends with a readable text result instead of a generic system failure.
+
 Branding and visual style:
 
 - Use `GeminiBrand.gradient` and `GeminiSpark` for Gemini accent moments.
@@ -246,6 +256,7 @@ Preferred validation:
    - model picker failure is handled gracefully
    - web-search sources display when enabled and returned
    - TTS starts and stops for model messages
+   - Ask Gemini shortcut (Dictate Text → Ask Gemini → Show Result) returns text only — never spoken — and the exchange appears in the "Quick Ask (Action Button)" conversation afterward
 
 CLI validation, when full Xcode is available:
 
