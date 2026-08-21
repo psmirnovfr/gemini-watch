@@ -217,6 +217,8 @@ App Intents / Shortcuts (Action button flow):
 - The Quick Ask answer must never be spoken. Do not add `ProvidesDialog`, auto-TTS, or a `Speaker` call to `QuickAskView` — a silent, readable reply is the point of the feature.
 - `QuickAskView` renders through `MarkdownContent` rather than `MessageView` specifically to avoid inheriting the bubble's tap-to-speak gesture.
 - Do not rename `AskGeminiIntent`, its `question` parameter, or `GeminiWatchShortcuts` without a clear reason — Shortcuts users' saved shortcuts reference the intent by identity, and renames break them.
+- **The path from Action-button press to first token must stay at zero screen taps.** Do not add a confirmation step, a "send" button, a review-the-transcript screen, or `requestConfirmation()` anywhere in this chain, and keep `QuickAskView` firing its request from `onAppear` rather than waiting for input. Buttons belong *after* the answer, never before it.
+- Speech-to-text is watchOS dictation, done in the Shortcut before the intent runs — Gemini receives text only. Do not move transcription in-app: `presentTextInputController` shows a Scribble/Dictation picker (an extra tap), and sending audio to Gemini instead would cost multimodal quota and force a manual stop control.
 - Both the intent and the view must be re-entry safe. `QuickAskView.onAppear` is guarded by `didStart`, and `QuickAskRouter.markDelivered()` drops the persisted copy so a cold launch never replays an answered question. Every unguarded path costs the user a real API request.
 
 Model tiers:

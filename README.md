@@ -168,15 +168,27 @@ Action button → speak → answer streams in as scrollable text
     with the better model         keep talking
 ```
 
+**Cost to reach the answer: one button press, zero screen taps.**
+
+| Step | Taps |
+|---|---|
+| Press Action button | 1 press |
+| Mic appears, listening starts automatically | 0 |
+| You stop speaking → dictation ends on its own | 0 |
+| App opens and starts streaming immediately | 0 |
+
 ### One-time setup
 
 1. Install/update Gemini Watch on your Apple Watch Ultra (or Ultra 2) at least once so the system indexes its App Intents.
 2. On the watch, open the **Shortcuts** app (or build it on your iPhone under the Shortcuts app's **Watch** tab — it syncs over).
 3. Create a shortcut with two steps, in order:
    - **Dictate Text** — captures your spoken question with the watch mic.
+     - ⚠️ **Set `Stop Listening` to `After Short Pause`.** This is the whole difference between a zero-tap flow and having to tap "Done" every single time. If it's left on **On Tap**, dictation waits for a tap before it will hand the text over.
    - **Ask Gemini** (listed under Gemini Watch's actions) — pass the **Dictated Text** output into its **Question** parameter.
 4. Name it (e.g. "Ask Gemini") and save.
 5. On the watch: **Settings → Action Button → Shortcut**, and pick it.
+
+There is no confirmation step anywhere in the chain: the intent never asks for confirmation, the question is already supplied so the system never prompts for it, and `QuickAskView` fires the request the moment it appears rather than waiting for input.
 
 > No **Show Result** step is needed — Gemini Watch draws the answer itself, which is what makes the follow-up buttons possible. Shortcuts' own result card is text-only and can't carry them.
 >
@@ -283,6 +295,14 @@ Yes. See [Action Button Setup](#action-button-setup-apple-watch-ultra). Press th
 ### Why does the Action button open the app instead of showing a Shortcuts result card?
 
 Because the result card is text-only. Getting **Smart** and **Continue** buttons under the answer requires the app to draw the screen, so `AskGeminiIntent` hands the question to the app and lets `QuickAskView` stream the reply.
+
+### Who does the speech-to-text — watchOS or Gemini?
+
+**watchOS.** Apple's dictation transcribes your speech, and Gemini only ever receives text. No audio is uploaded, so nothing extra counts against your Gemini quota, and Apple's end-of-speech detection is what lets dictation stop on its own without a tap. The transcript is saved as a normal user message, so you can long-press to edit and regenerate if dictation mangles a technical term.
+
+### How many taps to get an answer?
+
+One Action-button press and zero screen taps — provided **Dictate Text** has `Stop Listening` set to `After Short Pause`. See [Action Button Setup](#action-button-setup-apple-watch-ultra).
 
 ### How do I keep my free AI Studio key from running out of quota?
 
