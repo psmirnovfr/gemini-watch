@@ -21,56 +21,15 @@ struct MessageView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             // MARK: - Markdown Content
-            if isStreaming {
-                // Rich parsing is intentionally deferred until the response is
-                // complete. Re-running every regex for every token is costly on
-                // watch hardware and can make long responses stutter.
-                Text(message.text)
-                    .font(.system(size: 12))
-            } else {
-                let parts = MarkdownParser.shared.parse(message.text)
+            MarkdownContent(text: message.text, isStreaming: isStreaming)
 
-                ForEach(parts.indices, id: \.self) { index in
-                    let part = parts[index]
-                    switch part.type {
-                    case .code(let language):
-                        VStack(alignment: .leading, spacing: 0) {
-                            if let language = language, !language.isEmpty {
-                                Text(language.uppercased())
-                                    .font(.system(size: 7, weight: .bold, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.bottom, 1)
-                            }
-                            Text(part.text)
-                                .font(.system(size: 9, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .padding(5)
-                        .background(Color.black.opacity(0.5))
-                        .cornerRadius(5)
-
-                    case .blockMath:
-                        Text(part.text)
-                            .font(.system(size: 10, design: .serif))
-                            .italic()
-                            .padding(3)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .background(Color.white.opacity(0.1))
-                            .cornerRadius(4)
-
-                    case .inlineMath:
-                        Text(part.text)
-                            .font(.system(size: 10, design: .serif))
-                            .italic()
-                            .padding(.horizontal, 2)
-                            .background(Color.white.opacity(0.05))
-                            .cornerRadius(2)
-
-                    case .text:
-                        Text(LocalizedStringKey(part.text))
-                            .font(.system(size: 12))
-                    }
-                }
+            // MARK: - Model Badge
+            // Shows which model produced the reply once more than one is in
+            // play (e.g. after escalating a fast answer to the smart model).
+            if message.role == .model, let modelName = message.modelName {
+                Text(modelName.shortModelLabel)
+                    .font(.system(size: 8, design: .monospaced))
+                    .foregroundStyle(.tertiary)
             }
 
             // MARK: - Streaming Cursor

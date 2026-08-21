@@ -5,8 +5,11 @@ struct ConversationListView: View {
     @State private var activeConversation: ConversationMetadata?
     @State private var showSettings = false
     @State private var searchText = ""
+    /// Follow-up handed over from Quick Ask, sent once the chat opens.
+    @State private var pendingFollowUp: String?
 
     @EnvironmentObject private var settingsStore: AppSettingsStore
+    @ObservedObject private var quickAsk = QuickAskRouter.shared
 
     private let persistence = PersistenceManager.shared
     private let geminiService = GeminiService()
@@ -51,7 +54,11 @@ struct ConversationListView: View {
             }
             .searchable(text: $searchText, prompt: "Search") // (#13)
             .navigationDestination(item: $activeConversation) { metadata in
-                ContentView(conversationId: metadata.id, onUpdate: refreshList)
+                ContentView(
+                    conversationId: metadata.id,
+                    initialMessage: pendingFollowUp,
+                    onUpdate: refreshList
+                )
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView(geminiService: geminiService, onClearAll: {
@@ -60,7 +67,45 @@ struct ConversationListView: View {
             }
             .onAppear {
                 refreshList()
+                quickAsk.consumePendingIfNeeded()
             }
+        }
+        // Action-button asks take over the whole screen — a press should land
+        // on the answer, not on whatever was last open.
+        .fullScreenCover(item: $quickAsk.request) { request in
+            NavigationStack {
+                QuickAskView(
+                    request: request,
+                    onContinue: openFromQuickAsk,
+                    onDismiss: {
+                        quickAsk.clear()
+                        refreshList()
+                    }
+                )
+            }
+            .id(request.id)
+        }
+    }
+
+    /// Leaves Quick Ask and pushes the same conversation in the full chat UI.
+    private func openFromQuickAsk(conversationId: UUID, followUp: String?) {
+        let metadata = persistence.loadConversationsMetadata()
+            .first(where: { $0.id == conversationId })
+            ?? ConversationMetadata(
+                id: conversationId,
+                title: "New Chat",
+                createdAt: Date(),
+                updatedAt: Date()
+            )
+
+        pendingFollowUp = followUp
+        quickAsk.clear()
+        refreshList()
+
+        // Dismissing the cover and pushing in the same tick can drop the push,
+        // so let the cover finish tearing down first.
+        DispatchQueue.main.async {
+            activeConversation = metadata
         }
     }
 
@@ -72,7 +117,7 @@ struct ConversationListView: View {
             Text("No Chats Yet")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(settingsStore.settings.modelName.replacingOccurrences(of: "gemini-", with: ""))
+            Text(settingsStore.settings.modelName.shortModelLabel)
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(.tertiary)
             Button {
@@ -92,6 +137,7 @@ struct ConversationListView: View {
         List {
             ForEach(filteredConversations) { convo in
                 Button {
+                    pendingFollowUp = nil
                     activeConversation = convo
                 } label: {
                     HStack(spacing: 4) {
@@ -147,6 +193,7 @@ struct ConversationListView: View {
     // MARK: - Actions
 
     private func startNewChat() {
+        pendingFollowUp = nil
         let newConvo = Conversation()
         persistence.saveConversation(newConvo)
         activeConversation = ConversationMetadata(

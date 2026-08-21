@@ -4,6 +4,7 @@ import WatchKit
 struct ContentView: View {
     @StateObject private var viewModel: ChatViewModel
     @State private var inputText = ""
+    @State private var didLoad = false
     @FocusState private var isInputFocused: Bool
 
     @EnvironmentObject private var settingsStore: AppSettingsStore
@@ -11,10 +12,14 @@ struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let conversationId: UUID
+    /// Sent automatically once the conversation loads — used when a Quick Ask
+    /// follow-up chip opens the chat.
+    var initialMessage: String?
     var onUpdate: (() -> Void)?
 
-    init(conversationId: UUID, onUpdate: (() -> Void)? = nil) {
+    init(conversationId: UUID, initialMessage: String? = nil, onUpdate: (() -> Void)? = nil) {
         self.conversationId = conversationId
+        self.initialMessage = initialMessage
         self.onUpdate = onUpdate
         // ViewModel created here; settingsStore injected after init via configure()
         _viewModel = StateObject(wrappedValue: ChatViewModel())
@@ -71,7 +76,13 @@ struct ContentView: View {
                             .id("loader")
                         }
 
-                        // Quick-reply suggestions
+                        // Escalation + quick-reply suggestions
+                        if viewModel.canEscalateToSmartModel {
+                            smartChip
+                                .id("smart_chip")
+                                .transition(.opacity)
+                        }
+
                         if !viewModel.suggestions.isEmpty {
                             suggestionChips
                                 .id("suggestions")
@@ -164,7 +175,15 @@ struct ContentView: View {
         }
         .onAppear {
             viewModel.configure(settingsStore: settingsStore)
+            // Load once. Re-appearing (returning from a sheet, or after the
+            // "+" button started a different conversation) must not reload over
+            // live state — and must never re-send the handed-over follow-up.
+            guard !didLoad else { return }
+            didLoad = true
             viewModel.loadConversation(id: conversationId)
+            if let initialMessage, !initialMessage.isEmpty {
+                viewModel.sendMessage(initialMessage)
+            }
         }
         .ignoresSafeArea(edges: .bottom)
     }
@@ -214,6 +233,37 @@ struct ContentView: View {
             Spacer().frame(height: 14)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Smart Escalation Chip
+
+    /// Re-runs the whole conversation through the smarter model. Sits above the
+    /// quick replies because it acts on the answer you just read.
+    private var smartChip: some View {
+        Button {
+            if settingsStore.settings.hapticsEnabled {
+                WKInterfaceDevice.current().play(.click)
+            }
+            viewModel.escalateToSmartModel()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkle")
+                    .font(.system(size: 9))
+                Text("Smart · \(viewModel.smartModelLabel)")
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.white.opacity(0.1))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule().strokeBorder(GeminiBrand.gradient, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Re-ask the smarter model, \(viewModel.smartModelLabel)")
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
     }
 
     // MARK: - Suggestion Chips

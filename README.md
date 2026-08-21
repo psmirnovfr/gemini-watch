@@ -50,7 +50,8 @@ If you're looking for a **native Apple Watch Gemini client**, a **lightweight LL
 - **Adjustable Creativity (Temperature)** — A Precise → Balanced → Creative → Wild slider maps directly to the Gemini `temperature` parameter (0.0–1.0), with a one-tap reset to the default.
 - **Haptic Feedback** — Optional haptics on key interactions; toggleable in Settings.
 - **Double Tap Gesture Support** — Use the watchOS Double Tap gesture (Apple Watch Series 9, 10, and Ultra 2) to open the input field instantly.
-- **Action Button Integration (Apple Watch Ultra)** — Press the Action button, speak your question, and get Gemini's reply as text on screen — no app UI, no voice output. Powered by an `AppIntent` you wire up once in the Shortcuts app. See [Action Button Setup](#action-button-setup-apple-watch-ultra).
+- **Action Button Integration (Apple Watch Ultra)** — Press the Action button, speak your question, read the reply as scrollable text — never spoken aloud. Follow-up buttons under the answer let you escalate to a smarter model or continue in the full chat. See [Action Button Setup](#action-button-setup-apple-watch-ultra).
+- **Two-Tier Models for Free-Tier Keys** — A cheap "Everyday" model answers every message; one tap on **✦ Smart** re-sends the whole conversation to a stronger model. Keeps an AI Studio free-tier key viable without giving up quality when it matters.
 - **Customizable System Prompt** — Edit Gemini's persona, tone, and instructions right from the in-app Settings screen, with a reset-to-default button.
 - **Live Model Picker** — Switch between available Gemini models (e.g., `gemini-2.5-flash`, `gemini-2.5-pro`). The list is fetched live from the Gemini API and filtered to text-capable models.
 - **Clear All Chats** — One-tap bulk delete with a confirmation dialog in the Settings "Danger Zone".
@@ -155,29 +156,54 @@ Open **Settings** from the conversation list to configure:
 
 ## Action Button Setup (Apple Watch Ultra)
 
-Gemini Watch exposes an **`AskGeminiIntent`** ([App Intents](https://developer.apple.com/documentation/appintents)) that takes a spoken question and returns Gemini's reply as **plain text — never spoken aloud**. Wire it to the Action button once, and every press becomes: *talk → text reply on screen*, without opening the app.
+Press the Action button, speak a question, read the answer. No voice output, no typing.
+
+```
+Action button → speak → answer streams in as scrollable text
+                              ↓
+                    ┌─────────┴─────────┐
+                    │                   │
+             ✦ Smart              Continue →
+   re-ask the same context     open the chat and
+    with the better model         keep talking
+```
 
 ### One-time setup
 
 1. Install/update Gemini Watch on your Apple Watch Ultra (or Ultra 2) at least once so the system indexes its App Intents.
-2. On the watch, open the **Shortcuts** app (or build the shortcut on your iPhone in the Shortcuts app under the **Watch** tab — it syncs to the watch).
-3. Create a new shortcut with these steps, in order:
+2. On the watch, open the **Shortcuts** app (or build it on your iPhone under the Shortcuts app's **Watch** tab — it syncs over).
+3. Create a shortcut with two steps, in order:
    - **Dictate Text** — captures your spoken question with the watch mic.
-   - **Ask Gemini** (search for it under Gemini Watch's actions) — pass the **Dictated Text** output into its **Question** parameter.
-   - **Show Result** — pass the **Ask Gemini** output in, so the reply is displayed as text on screen.
-4. Name the shortcut (e.g. "Ask Gemini") and save it.
-5. On the watch, open **Settings → Action Button**, swipe to **Shortcut**, and pick the shortcut you just created.
+   - **Ask Gemini** (listed under Gemini Watch's actions) — pass the **Dictated Text** output into its **Question** parameter.
+4. Name it (e.g. "Ask Gemini") and save.
+5. On the watch: **Settings → Action Button → Shortcut**, and pick it.
 
-Now: **press and hold the Action button → speak your question → the text reply appears on screen.**
+> No **Show Result** step is needed — Gemini Watch draws the answer itself, which is what makes the follow-up buttons possible. Shortcuts' own result card is text-only and can't carry them.
+>
+> You can also skip the manual build entirely: Gemini Watch registers "Ask Gemini" as an App Shortcut, so it already appears in the Shortcuts gallery and can be assigned to the Action button directly. Assigned that way, the system prompts you to speak the question when it runs.
 
-> Shortcuts also lets you skip step 3's manual build: Gemini Watch registers "Ask Gemini" as an App Shortcut, so it should already appear in the Shortcuts app gallery, ready to assign directly to the Action button. If you assign it without a Dictate Text step, the system will prompt you to speak your question when the shortcut runs.
+### What you get
 
-### Notes
+- **Scrollable text answer** — streams in token by token; the Digital Crown scrolls long replies. Nothing is ever read aloud.
+- **✦ Smart** — the free-tier escape hatch. Re-sends the *whole* conversation to the smarter model when the cheap answer isn't good enough. Only appears when it would actually change the answer, and each reply is badged with the model that produced it.
+- **Continue** — opens the same conversation in the full chat UI so you can keep going.
+- **Follow-up chips** — context-aware suggestions; tapping one opens the chat with that follow-up already sent.
+- Every Action-button ask is saved as a normal conversation, browsable later from the list.
 
-- Runs **headless** — the intent does not open the Gemini Watch UI, so it stays fast and doesn't interrupt whatever you were doing.
-- Every question and answer is also saved into a rolling **"Quick Ask (Action Button)"** conversation, viewable later from the normal conversation list.
-- Uses whatever **Model**, **System Prompt**, **Creativity**, and **Web Search** settings are currently configured in the app's Settings screen.
-- Requires the same `Secrets.plist` / `GEMINI_API_KEY` setup as the rest of the app — see [Installation & Setup](#installation--setup).
+### Model tiers and free-tier quota
+
+Settings → **AI Models** has two pickers, both populated from the live model list:
+
+| Picker | Default | When it runs |
+|---|---|---|
+| **Everyday** | `gemini-3.5-flash-lite` | Every message you send — one cheap request per turn. |
+| **Smart** | `gemini-3.7-flash` | Only when you tap **✦ Smart**. |
+
+That keeps an AI Studio free-tier key comfortable: cheap model by default, one deliberate escalation when you need it.
+
+> Model IDs change as Google's lineup does. Both pickers read the live `/models` list from your key, so if a default ID isn't available to you, just pick a different one in Settings — no code change needed.
+
+The Action button flow uses the same `Secrets.plist` / `GEMINI_API_KEY` setup as the rest of the app — see [Installation & Setup](#installation--setup).
 
 ---
 
@@ -200,7 +226,10 @@ Gemini Watch follows a lean MVVM architecture built entirely in SwiftUI. There i
 | `Speaker.swift` | Text-to-speech wrapper around `AVSpeechSynthesizer`. |
 | `AppSettingsStore.swift` | Observable store for user preferences. |
 | `Branding.swift` | Shared colors, gradients, and typography tokens. |
-| `AskGeminiIntent.swift` | `AppIntent` powering the Action button / Shortcuts flow — headless question → text reply, plus the `AppShortcutsProvider` registration. |
+| `AskGeminiIntent.swift` | `AppIntent` powering the Action button / Shortcuts flow, plus the `AppShortcutsProvider` registration. |
+| `QuickAskRouter.swift` | Carries the dictated question from the intent into the UI, surviving a cold launch. |
+| `QuickAskView.swift` | The post-Action-button screen — streaming answer, crown scrolling, Smart / Continue / follow-up buttons. |
+| `MarkdownContent.swift` | Shared markdown/code/math renderer used by both `MessageView` and `QuickAskView`. |
 
 ### Data flow
 
@@ -249,7 +278,15 @@ The current release focuses on text chat with text-to-speech output. Voice input
 
 ### Can I use the Apple Watch Ultra Action button to talk to Gemini?
 
-Yes. See [Action Button Setup](#action-button-setup-apple-watch-ultra). Press and hold the Action button, speak your question, and Gemini's reply appears as **text on screen** — it is never spoken aloud, and the app UI never has to open.
+Yes. See [Action Button Setup](#action-button-setup-apple-watch-ultra). Press the Action button, speak your question, and Gemini's reply appears as **scrollable text on screen** — never spoken aloud. Buttons under the answer let you escalate to a smarter model or continue the conversation in the app.
+
+### Why does the Action button open the app instead of showing a Shortcuts result card?
+
+Because the result card is text-only. Getting **Smart** and **Continue** buttons under the answer requires the app to draw the screen, so `AskGeminiIntent` hands the question to the app and lets `QuickAskView` stream the reply.
+
+### How do I keep my free AI Studio key from running out of quota?
+
+The **Everyday** model in Settings (default `gemini-3.5-flash-lite`) answers every message — one cheap request per turn. The stronger **Smart** model only runs when you tap **✦ Smart**, which re-sends the whole conversation. See [Model tiers and free-tier quota](#model-tiers-and-free-tier-quota).
 
 ### Does Gemini Watch support web search?
 

@@ -14,6 +14,9 @@ class ChatViewModel: ObservableObject {
     @Published var suggestions: [String] = []
     /// ID of the message currently being streamed — used to show a typing cursor.
     @Published var streamingMessageId: UUID? = nil
+    /// Model that produced the newest reply, so the UI can badge it and decide
+    /// whether escalating to the smart model would actually change anything.
+    @Published var lastResponseModel: String? = nil
 
     private let geminiService: GeminiService
     private let persistence: PersistenceManager
@@ -54,6 +57,28 @@ class ChatViewModel: ObservableObject {
         isLoading = false
         suggestions = []
         streamingMessageId = nil
+        lastResponseModel = messages.last(where: { $0.role == .model })?.modelName
+    }
+
+    /// Entry point for the Action-button flow: opens a brand-new conversation
+    /// seeded with the dictated question and immediately starts streaming.
+    /// Kept separate from `resetChat` + `sendMessage` so the conversation is
+    /// created and titled in one pass, before any UI observes an empty state.
+    func startQuickAsk(_ question: String) {
+        streamTask?.cancel()
+        streamTask = nil
+        errorMessage = nil
+        editingMessageId = nil
+        suggestions = []
+        streamingMessageId = nil
+        lastResponseModel = nil
+        messages = []
+
+        let newConvo = Conversation()
+        conversationId = newConvo.id
+        persistence.saveConversation(newConvo)
+
+        sendMessage(question)
     }
 
     func resetChat() {
@@ -65,6 +90,7 @@ class ChatViewModel: ObservableObject {
         editingMessageId = nil
         suggestions = []
         streamingMessageId = nil
+        lastResponseModel = nil
 
         let newConvo = Conversation()
         conversationId = newConvo.id
@@ -119,6 +145,9 @@ class ChatViewModel: ObservableObject {
         streamTask = nil
         isLoading = false
         streamingMessageId = nil
+        // A stopped stream still leaves a usable partial reply, so record which
+        // model produced it — otherwise "Smart" can't tell it has work to do.
+        lastResponseModel = messages.last(where: { $0.role == .model })?.modelName
         persistCurrentState()
     }
 
@@ -138,13 +167,49 @@ class ChatViewModel: ObservableObject {
         isLoading || streamingMessageId != nil
     }
 
-    private func processRequest() {
+    // MARK: - Smart Escalation
+
+    private var currentSettings: AppSettings {
+        settingsStore?.settings ?? persistence.loadSettings()
+    }
+
+    /// True when the latest reply came from the cheap model and re-running the
+    /// same context through the smart model would actually produce something new.
+    var canEscalateToSmartModel: Bool {
+        let settings = currentSettings
+        guard !isGenerating,
+              !settings.smartModelName.isEmpty,
+              messages.contains(where: { $0.role == .model }) else { return false }
+        return lastResponseModel != settings.smartModelName
+    }
+
+    var smartModelLabel: String {
+        currentSettings.smartModelName.shortModelLabel
+    }
+
+    /// Drop the cheap reply and re-send the *whole* conversation to the smart
+    /// model. One extra request, on demand — the escape hatch for when the
+    /// lite-tier answer isn't good enough.
+    func escalateToSmartModel() {
+        let smartModel = currentSettings.smartModelName
+        guard !smartModel.isEmpty else { return }
+
+        streamTask?.cancel()
+        if messages.last?.role == .model {
+            messages.removeLast()
+        }
+        suggestions = []
+        processRequest(modelOverride: smartModel)
+    }
+
+    private func processRequest(modelOverride: String? = nil) {
         streamTask?.cancel()
         isLoading = true
         errorMessage = nil
 
         // Read from the injected store (reactive, no disk I/O) or fall back (#5)
         let settings = settingsStore?.settings ?? persistence.loadSettings()
+        let requestModel = modelOverride ?? settings.modelName
 
         // Subtle "request sent" cue — matches Google's own Gemini apps.
         if settings.hapticsEnabled {
@@ -160,7 +225,7 @@ class ChatViewModel: ObservableObject {
             do {
                 let stream = await geminiService.streamGenerateContent(
                     messages: messages,
-                    model: settings.modelName,
+                    model: requestModel,
                     systemPrompt: settings.systemPrompt,
                     temperature: settings.temperature,
                     enableWebSearch: settings.webSearchEnabled
@@ -182,7 +247,7 @@ class ChatViewModel: ObservableObject {
                             if messageIndex == nil || now.timeIntervalSince(lastUpdate) > 0.1 {
                                 isLoading = false
                                 if messageIndex == nil {
-                                    let modelMessage = Message(role: .model, text: fullResponse, sources: latestSources.isEmpty ? nil : latestSources)
+                                    let modelMessage = Message(role: .model, text: fullResponse, sources: latestSources.isEmpty ? nil : latestSources, modelName: requestModel)
                                     messages.append(modelMessage)
                                     messageIndex = messages.count - 1
                                     streamingMessageId = modelMessage.id
@@ -203,9 +268,10 @@ class ChatViewModel: ObservableObject {
                             messages[idx].sources = latestSources
                         }
                     } else {
-                        let msg = Message(role: .model, text: fullResponse, sources: latestSources.isEmpty ? nil : latestSources)
+                        let msg = Message(role: .model, text: fullResponse, sources: latestSources.isEmpty ? nil : latestSources, modelName: requestModel)
                         messages.append(msg)
                     }
+                    lastResponseModel = requestModel
                 }
 
                 streamingMessageId = nil

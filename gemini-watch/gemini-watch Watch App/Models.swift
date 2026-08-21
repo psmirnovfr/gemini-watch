@@ -20,17 +20,29 @@ struct Message: Identifiable, Codable, Equatable, Hashable {
     /// Web-search grounding sources attached to this response, if any.
     /// Optional so older persisted messages (without the field) still decode.
     var sources: [GroundingSource]?
+    /// Which Gemini model produced this reply. Optional for the same
+    /// decode-compatibility reason, and always nil for user messages.
+    var modelName: String?
 
     init(id: UUID = UUID(),
          role: MessageRole,
          text: String,
          createdAt: Date = Date(),
-         sources: [GroundingSource]? = nil) {
+         sources: [GroundingSource]? = nil,
+         modelName: String? = nil) {
         self.id = id
         self.role = role
         self.text = text
         self.createdAt = createdAt
         self.sources = sources
+        self.modelName = modelName
+    }
+}
+
+extension String {
+    /// Trims the redundant `gemini-` prefix for compact watch labels.
+    var shortModelLabel: String {
+        replacingOccurrences(of: "gemini-", with: "")
     }
 }
 
@@ -77,6 +89,8 @@ struct ConversationMetadata: Identifiable, Codable, Equatable, Hashable {
 }
 
 struct AppSettings: Codable, Equatable {
+    /// The everyday model. Defaults to a cheap "lite" tier so a free AI Studio
+    /// key can absorb one request per message without burning quota.
     var modelName: String
     var speechRate: Float
     var hapticsEnabled: Bool
@@ -85,11 +99,14 @@ struct AppSettings: Codable, Equatable {
     var temperature: Double
     /// Enable Gemini's `google_search` tool for grounded answers with citations.
     var webSearchEnabled: Bool
+    /// The escalation model behind the "Smart" button — used only when the
+    /// cheap answer isn't good enough, so it stays a deliberate, occasional cost.
+    var smartModelName: String
 
-    // Codable back-compat — older persisted settings don't have webSearchEnabled.
+    // Codable back-compat — older persisted settings don't have the newer keys.
     private enum CodingKeys: String, CodingKey {
         case modelName, speechRate, hapticsEnabled, suggestionsEnabled
-        case systemPrompt, temperature, webSearchEnabled
+        case systemPrompt, temperature, webSearchEnabled, smartModelName
     }
 
     init(modelName: String,
@@ -98,7 +115,8 @@ struct AppSettings: Codable, Equatable {
          suggestionsEnabled: Bool,
          systemPrompt: String,
          temperature: Double,
-         webSearchEnabled: Bool = false) {
+         webSearchEnabled: Bool = false,
+         smartModelName: String = AppSettings.defaultSmartModel) {
         self.modelName = modelName
         self.speechRate = speechRate
         self.hapticsEnabled = hapticsEnabled
@@ -106,6 +124,7 @@ struct AppSettings: Codable, Equatable {
         self.systemPrompt = systemPrompt
         self.temperature = temperature
         self.webSearchEnabled = webSearchEnabled
+        self.smartModelName = smartModelName
     }
 
     init(from decoder: Decoder) throws {
@@ -117,17 +136,24 @@ struct AppSettings: Codable, Equatable {
         systemPrompt = try c.decode(String.self, forKey: .systemPrompt)
         temperature = try c.decode(Double.self, forKey: .temperature)
         webSearchEnabled = try c.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? false
+        smartModelName = try c.decodeIfPresent(String.self, forKey: .smartModelName) ?? AppSettings.defaultSmartModel
     }
 
     static let defaultSystemPrompt = "You are a helpful AI assistant. Be very concise — use short sentences, bullet points, and bold key terms. Avoid long paragraphs. Format for tiny screens."
 
+    /// Both defaults are editable in Settings from the live model list, so a
+    /// changed model lineup is a two-tap fix rather than a code change.
+    static let defaultFastModel = "gemini-3.5-flash-lite"
+    static let defaultSmartModel = "gemini-3.7-flash"
+
     static let `default` = AppSettings(
-        modelName: "gemini-2.5-flash",
+        modelName: defaultFastModel,
         speechRate: 0.5,
         hapticsEnabled: true,
         suggestionsEnabled: true,
         systemPrompt: defaultSystemPrompt,
         temperature: 0.7,
-        webSearchEnabled: false
+        webSearchEnabled: false,
+        smartModelName: defaultSmartModel
     )
 }

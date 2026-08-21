@@ -36,17 +36,30 @@ struct SettingsView: View {
                             .font(.caption2)
                             .foregroundStyle(.red)
                     } else {
-                        Picker("Model", selection: $settingsStore.settings.modelName) {
+                        Picker("Everyday", selection: $settingsStore.settings.modelName) {
                             ForEach(availableModels, id: \.self) { model in
-                                Text(model.replacingOccurrences(of: "gemini-", with: ""))
+                                Text(model.shortModelLabel)
                                     .font(.caption2)
                                     .tag(model)
                             }
                         }
                         .font(.caption2)
+
+                        Picker("Smart", selection: $settingsStore.settings.smartModelName) {
+                            ForEach(availableModels, id: \.self) { model in
+                                Text(model.shortModelLabel)
+                                    .font(.caption2)
+                                    .tag(model)
+                            }
+                        }
+                        .font(.caption2)
+
+                        Text("Everyday answers every message. Smart only runs when you tap it.")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.tertiary)
                     }
                 } header: {
-                    Text("AI Model")
+                    Text("AI Models")
                         .font(.system(size: 9))
                 }
 
@@ -169,15 +182,19 @@ struct SettingsView: View {
             let models = try await geminiService.listModels()
             availableModels = models
 
-            // If current selection isn't in the list, keep it anyway
-            if !models.contains(settingsStore.settings.modelName) && !models.isEmpty {
-                availableModels.insert(settingsStore.settings.modelName, at: 0)
+            // Keep current selections selectable even if the API no longer
+            // lists them — otherwise the picker would silently drop them.
+            for selected in [settingsStore.settings.modelName, settingsStore.settings.smartModelName]
+            where !selected.isEmpty && !availableModels.contains(selected) {
+                availableModels.insert(selected, at: 0)
             }
 
             isLoadingModels = false
         } catch {
             modelError = "Couldn't load models"
-            availableModels = [settingsStore.settings.modelName]
+            availableModels = Array(
+                Set([settingsStore.settings.modelName, settingsStore.settings.smartModelName])
+            ).sorted()
             isLoadingModels = false
         }
     }

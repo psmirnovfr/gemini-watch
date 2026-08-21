@@ -19,6 +19,9 @@ Gemini Watch is a standalone watchOS SwiftUI app that talks directly to the Goog
         ├── AppSettingsStore.swift
         ├── AskGeminiIntent.swift
         ├── Branding.swift
+        ├── MarkdownContent.swift
+        ├── QuickAskRouter.swift
+        ├── QuickAskView.swift
         ├── ChatViewModel.swift
         ├── ContentView.swift
         ├── ConversationListView.swift
@@ -117,7 +120,10 @@ Core responsibilities:
 - `MarkdownParser.swift`: lightweight markdown/math/code parsing with precompiled regexes and a small parse cache.
 - `Speaker.swift`: `AVSpeechSynthesizer` wrapper and markdown cleanup for speech output.
 - `Branding.swift`: shared Gemini gradient and sparkle mark.
-- `AskGeminiIntent.swift`: `AppIntent` (`AskGeminiIntent`) and `AppShortcutsProvider` (`GeminiWatchShortcuts`) for the Action button / Shortcuts flow. Runs headless (`openAppWhenRun = false`), calls `GeminiService` directly, returns plain text (no `ProvidesDialog`/spoken output by design), and logs the exchange into a rolling "Quick Ask (Action Button)" conversation via `PersistenceManager`.
+- `AskGeminiIntent.swift`: `AppIntent` (`AskGeminiIntent`) and `AppShortcutsProvider` (`GeminiWatchShortcuts`) for the Action button / Shortcuts flow. Opens the app (`openAppWhenRun = true`) and hands the dictated question to `QuickAskRouter`; it performs no network work itself.
+- `QuickAskRouter.swift`: main-actor singleton carrying the pending question from the intent to the UI, mirrored to UserDefaults so a cold launch doesn't lose it.
+- `QuickAskView.swift`: the Action-button answer screen. Streams into its own `ChatViewModel`, renders scrollable text (Digital Crown), and offers Smart / Continue / follow-up chips. Never speaks its result.
+- `MarkdownContent.swift`: shared markdown/code/math renderer used by both `MessageView` and `QuickAskView`.
 
 ## Data Flow
 
@@ -203,13 +209,22 @@ Text-to-speech:
 - Keep markdown cleanup in `Speaker.cleanMarkdown`.
 - Pass settings into `Speaker.speak` rather than loading settings inside `Speaker`.
 
-App Intents / Shortcuts:
+App Intents / Shortcuts (Action button flow):
 
-- `AskGeminiIntent` is a text-in, text-out intent: it must never speak its result (no `ProvidesDialog`/`IntentDialog` on the returned value) — the whole point of the Action-button flow is a silent, on-screen text reply.
-- Keep `openAppWhenRun = false` so an Action-button press stays headless.
-- Do not rename the intent type, its `question` parameter, or the `AppShortcutsProvider` type without a clear reason — existing Shortcuts users built on the watch reference the intent by identity, and renames can break them.
-- Reuse `GeminiService` and `PersistenceManager` rather than duplicating request or storage logic for the intent.
-- Keep the intent's own error handling self-contained: catch and return errors as short text (matching `ChatViewModel`'s error strings) rather than throwing, so a Shortcut run always ends with a readable text result instead of a generic system failure.
+- The flow is: Shortcut (Dictate Text → Ask Gemini) → `AskGeminiIntent` → `QuickAskRouter` → `QuickAskView`.
+- `AskGeminiIntent` must stay a thin hand-off. It does no network work: it submits the question to `QuickAskRouter` and returns. Streaming belongs in `QuickAskView` via `ChatViewModel`, which is what gives the flow live tokens, crown scrolling, and buttons.
+- Keep `openAppWhenRun = true`. Shortcuts' result card is text-only and cannot host the Smart/Continue buttons, so the app must draw the answer. Do not "optimize" this back to a headless intent returning `ReturnsValue<String>` — that silently removes the follow-up affordances.
+- The Quick Ask answer must never be spoken. Do not add `ProvidesDialog`, auto-TTS, or a `Speaker` call to `QuickAskView` — a silent, readable reply is the point of the feature.
+- `QuickAskView` renders through `MarkdownContent` rather than `MessageView` specifically to avoid inheriting the bubble's tap-to-speak gesture.
+- Do not rename `AskGeminiIntent`, its `question` parameter, or `GeminiWatchShortcuts` without a clear reason — Shortcuts users' saved shortcuts reference the intent by identity, and renames break them.
+- Both the intent and the view must be re-entry safe. `QuickAskView.onAppear` is guarded by `didStart`, and `QuickAskRouter.markDelivered()` drops the persisted copy so a cold launch never replays an answered question. Every unguarded path costs the user a real API request.
+
+Model tiers:
+
+- `AppSettings.modelName` is the cheap everyday model (one request per message); `AppSettings.smartModelName` is the escalation model, used only when the user taps Smart.
+- Escalation goes through `ChatViewModel.escalateToSmartModel()`, which drops the last model reply and re-runs the whole context via `processRequest(modelOverride:)`. Do not add automatic escalation — the extra request must stay user-initiated, since the feature exists to protect free-tier quota.
+- Replies carry `Message.modelName`. Keep tagging them, and keep `lastResponseModel` in sync on every path that ends a stream (including `stopGeneration`), or `canEscalateToSmartModel` will offer a no-op re-ask.
+- Default model IDs are constants (`AppSettings.defaultFastModel` / `defaultSmartModel`) and both are user-overridable from the live model list in Settings. Prefer fixing a stale default there over hard-coding a new one.
 
 Branding and visual style:
 
@@ -256,7 +271,9 @@ Preferred validation:
    - model picker failure is handled gracefully
    - web-search sources display when enabled and returned
    - TTS starts and stops for model messages
-   - Ask Gemini shortcut (Dictate Text → Ask Gemini → Show Result) returns text only — never spoken — and the exchange appears in the "Quick Ask (Action Button)" conversation afterward
+   - Ask Gemini shortcut (Dictate Text → Ask Gemini) opens the app into `QuickAskView`, streams a text answer that scrolls with the crown, and never speaks it
+   - Smart re-asks with `smartModelName` and the reply's model badge changes; Continue and the follow-up chips both land in `ContentView` on the same conversation
+   - pressing the Action button twice in a row does not double-send, and relaunching the app afterward does not replay the previous question
 
 CLI validation, when full Xcode is available:
 
