@@ -3,26 +3,33 @@ import Foundation
 
 /// Powers the "press Action button → talk → read the reply" flow.
 ///
-/// Build a Shortcut with: Dictate Text → Ask Gemini (fed the dictated text),
-/// then assign it to the Action button in Watch Settings → Action Button →
-/// Shortcut. `requestValueDialog` also lets the intent be assigned on its own —
-/// the system prompts for the question when none is supplied.
+/// Assign it to the Action button in Watch Settings → Action Button → Shortcut.
+/// The `question` parameter decides who does the speech recognition:
+///
+/// - **Left empty** (a Shortcut that is just this action): the app records your
+///   voice and sends the audio to Gemini, which transcribes and answers in one
+///   request. Better with accents and code-switching than on-device dictation.
+/// - **Filled in** (Dictate Text → Ask Gemini): watchOS transcribes first and
+///   only text is sent. Faster and smaller, but limited to whatever language
+///   dictation is currently set to.
 ///
 /// The intent deliberately does **not** run the request itself. Shortcuts'
 /// "Show Result" card is text-only — it can't carry the Continue and Smart
-/// buttons — so the intent hands the question to `QuickAskRouter` and opens the
-/// app, which streams the answer into `QuickAskView`.
+/// buttons — so the intent hands off to `QuickAskRouter` and opens the app,
+/// which streams the answer into `QuickAskView`.
 struct AskGeminiIntent: AppIntent {
     static var title: LocalizedStringResource = "Ask Gemini"
     static var description = IntentDescription(
-        "Ask Gemini a question and read the reply on your watch, with follow-up options."
+        "Ask Gemini a question and read the reply on your watch. Leave the question empty to speak it instead."
     )
 
     /// The answer needs scrollable text plus buttons, which only the app can draw.
     static var openAppWhenRun: Bool = true
 
-    @Parameter(title: "Question", requestValueDialog: "What do you want to ask Gemini?")
-    var question: String
+    /// Optional on purpose: an empty question is the signal to record instead
+    /// of prompting, which is what keeps the voice flow at zero taps.
+    @Parameter(title: "Question")
+    var question: String?
 
     static var parameterSummary: some ParameterSummary {
         Summary("Ask Gemini: \(\.$question)")
@@ -43,7 +50,7 @@ struct GeminiWatchShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: AskGeminiIntent(),
             phrases: [
-                "Ask \(.applicationName) \(\.$question)",
+                "Ask \(.applicationName)",
                 "Ask \(.applicationName) a question"
             ],
             shortTitle: "Ask Gemini",

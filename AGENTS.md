@@ -22,6 +22,7 @@ Gemini Watch is a standalone watchOS SwiftUI app that talks directly to the Goog
         ├── MarkdownContent.swift
         ├── QuickAskRouter.swift
         ├── QuickAskView.swift
+        ├── VoiceRecorder.swift
         ├── ChatViewModel.swift
         ├── ContentView.swift
         ├── ConversationListView.swift
@@ -124,6 +125,7 @@ Core responsibilities:
 - `QuickAskRouter.swift`: main-actor singleton carrying the pending question from the intent to the UI, mirrored to UserDefaults so a cold launch doesn't lose it.
 - `QuickAskView.swift`: the Action-button answer screen. Streams into its own `ChatViewModel`, renders scrollable text (Digital Crown), and offers Smart / Continue / follow-up chips. Never speaks its result.
 - `MarkdownContent.swift`: shared markdown/code/math renderer used by both `MessageView` and `QuickAskView`.
+- `VoiceRecorder.swift`: `AVAudioRecorder` capture at 16 kHz mono PCM with meter-driven auto-stop. Publishes `state` and a normalised `level` for the mic UI; writes to `temporaryDirectory` and deletes after upload.
 
 ## Data Flow
 
@@ -218,7 +220,12 @@ App Intents / Shortcuts (Action button flow):
 - `QuickAskView` renders through `MarkdownContent` rather than `MessageView` specifically to avoid inheriting the bubble's tap-to-speak gesture.
 - Do not rename `AskGeminiIntent`, its `question` parameter, or `GeminiWatchShortcuts` without a clear reason — Shortcuts users' saved shortcuts reference the intent by identity, and renames break them.
 - **The path from Action-button press to first token must stay at zero screen taps.** Do not add a confirmation step, a "send" button, a review-the-transcript screen, or `requestConfirmation()` anywhere in this chain, and keep `QuickAskView` firing its request from `onAppear` rather than waiting for input. Buttons belong *after* the answer, never before it.
-- Speech-to-text is watchOS dictation, done in the Shortcut before the intent runs — Gemini receives text only. Do not move transcription in-app: `presentTextInputController` shows a Scribble/Dictation picker (an extra tap), and sending audio to Gemini instead would cost multimodal quota and force a manual stop control.
+- Speech-to-text has two paths, selected by whether the intent's optional `question` parameter is supplied. Empty means the app records and Gemini transcribes (better for accents and code-switching); non-empty means the Shortcut's Dictate Text already transcribed on-device. Keep both working — the text path is the fallback when a model without audio input is selected.
+- Do not replace the recorder with `presentTextInputController`: it shows a Scribble/Dictation picker, which is an extra tap.
+- `VoiceRecorder` ends the take from the input meter (trailing silence, no-speech timeout, hard duration cap). Those thresholds are the reason the flow needs no Stop button — do not add one, and do not "simplify" the auto-stop away.
+- Audio is transient: recorded to `temporaryDirectory`, uploaded once, then deleted via `discardRecording()`. Never persist audio into a `Conversation` — only the transcript Gemini returns.
+- A voice turn is one request, not two. `ChatViewModel` appends `voiceInstruction` to the system prompt asking for `TRANSCRIPT:` on the first line, then splits transcript from answer while streaming. Do not add a separate transcription call — it would double the quota cost the tiering exists to protect.
+- The transcript parser must stay fail-open: if the model ignores the format, every token still has to reach the answer. Keep the give-up length and the end-of-stream flush.
 - Both the intent and the view must be re-entry safe. `QuickAskView.onAppear` is guarded by `didStart`, and `QuickAskRouter.markDelivered()` drops the persisted copy so a cold launch never replays an answered question. Every unguarded path costs the user a real API request.
 
 Model tiers:
@@ -273,7 +280,10 @@ Preferred validation:
    - model picker failure is handled gracefully
    - web-search sources display when enabled and returned
    - TTS starts and stops for model messages
-   - Ask Gemini shortcut (Dictate Text → Ask Gemini) opens the app into `QuickAskView`, streams a text answer that scrolls with the crown, and never speaks it
+   - Ask Gemini shortcut with an empty Question opens straight into the mic, stops on its own when you stop talking, and streams transcript-then-answer
+   - Ask Gemini shortcut with Dictate Text supplying the Question skips recording entirely and sends text only
+   - denying microphone permission shows a readable error with a working Retry, not an empty screen
+   - the answer scrolls with the crown and is never spoken
    - Smart re-asks with `smartModelName` and the reply's model badge changes; Continue and the follow-up chips both land in `ContentView` on the same conversation
    - pressing the Action button twice in a row does not double-send, and relaunching the app afterward does not replay the previous question
 

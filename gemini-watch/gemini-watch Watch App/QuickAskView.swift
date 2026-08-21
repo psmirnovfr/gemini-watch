@@ -16,21 +16,28 @@ struct QuickAskView: View {
     var onDismiss: () -> Void
 
     @StateObject private var viewModel = ChatViewModel()
+    @StateObject private var recorder = VoiceRecorder()
     @State private var didStart = false
     @EnvironmentObject private var settingsStore: AppSettingsStore
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                questionHeader
-
-                if let error = viewModel.errorMessage {
-                    errorBlock(error)
+                if isRecording {
+                    micIndicator
                 } else {
+                    questionHeader
+                }
+
+                if let error = recordingError {
+                    errorBlock(error, retry: startVoiceCapture)
+                } else if let error = viewModel.errorMessage {
+                    errorBlock(error, retry: viewModel.retry)
+                } else if !isRecording {
                     answerBlock
                 }
 
-                if !viewModel.isGenerating && viewModel.errorMessage == nil && hasAnswer {
+                if !isRecording && !viewModel.isGenerating && viewModel.errorMessage == nil && hasAnswer {
                     actionButtons
 
                     if settingsStore.settings.suggestionsEnabled && !viewModel.suggestions.isEmpty {
@@ -45,7 +52,19 @@ struct QuickAskView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if viewModel.isGenerating {
+                if isRecording {
+                    // No stop button by design — the recorder ends on its own
+                    // when you stop talking. This only backs out entirely.
+                    Button {
+                        recorder.cancel()
+                        onDismiss()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityLabel("Cancel")
+                } else if viewModel.isGenerating {
                     Button {
                         viewModel.stopGeneration()
                         if settingsStore.settings.hapticsEnabled {
@@ -72,11 +91,48 @@ struct QuickAskView: View {
         .onAppear {
             viewModel.configure(settingsStore: settingsStore)
             // Guard against re-entry: the cover can re-appear and must never
-            // fire a second request for the same question.
+            // fire a second request — or a second recording — for the same ask.
             guard !didStart else { return }
             didStart = true
             QuickAskRouter.shared.markDelivered()
-            viewModel.startQuickAsk(request.question)
+
+            if let question = request.question, !question.isEmpty {
+                viewModel.startQuickAsk(question)
+            } else {
+                startVoiceCapture()
+            }
+        }
+        // The recorder ends the take itself; that's the cue to send.
+        .onChange(of: recorder.state) {
+            guard case .finished(let url) = recorder.state else { return }
+            if settingsStore.settings.hapticsEnabled {
+                WKInterfaceDevice.current().play(.click)
+            }
+            viewModel.startVoiceAsk(audioURL: url, mimeType: VoiceRecorder.mimeType)
+            recorder.discardRecording()
+        }
+        .onDisappear {
+            recorder.cancel()
+        }
+    }
+
+    // MARK: - Recording
+
+    private var isRecording: Bool {
+        switch recorder.state {
+        case .listening, .capturing: return true
+        default: return false
+        }
+    }
+
+    private var recordingError: String? {
+        if case .failed(let message) = recorder.state { return message }
+        return nil
+    }
+
+    private func startVoiceCapture() {
+        Task {
+            await recorder.start()
         }
     }
 
@@ -84,20 +140,61 @@ struct QuickAskView: View {
         viewModel.messages.contains { $0.role == .model && !$0.text.isEmpty }
     }
 
-    // MARK: - Question
+    // MARK: - Mic
 
-    private var questionHeader: some View {
-        HStack(alignment: .top, spacing: 4) {
-            Image(systemName: "mic.fill")
+    /// Shown while the mic is live. Deliberately has no controls — the take
+    /// ends on its own, so there is nothing here to tap.
+    private var micIndicator: some View {
+        VStack(spacing: 8) {
+            ZStack {
+                Circle()
+                    .fill(GeminiBrand.gradient)
+                    .opacity(0.25 + 0.5 * recorder.level)
+                    .frame(width: 46 + CGFloat(recorder.level) * 16)
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(height: 66)
+            .animation(.easeOut(duration: 0.12), value: recorder.level)
+
+            Text(recorder.state == .capturing ? "Listening…" : "Speak now")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            Text("Stops when you do")
                 .font(.system(size: 8))
                 .foregroundStyle(.tertiary)
-                .padding(.top, 2)
-            Text(request.question)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.top, 2)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Listening. Recording stops automatically when you stop speaking.")
+    }
+
+    // MARK: - Question
+
+    @ViewBuilder
+    private var questionHeader: some View {
+        // For a voice ask this is the transcript Gemini returned, so it doubles
+        // as confirmation of what was actually heard.
+        let asked = viewModel.messages.first(where: { $0.role == .user })?.text
+            ?? request.question
+            ?? ""
+
+        if !asked.isEmpty {
+            HStack(alignment: .top, spacing: 4) {
+                Image(systemName: request.isVoice ? "waveform" : "text.bubble")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 2)
+                Text(asked)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.top, 2)
+        }
     }
 
     // MARK: - Answer
@@ -135,19 +232,17 @@ struct QuickAskView: View {
         }
     }
 
-    private func errorBlock(_ error: String) -> some View {
+    private func errorBlock(_ error: String, retry: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(error)
                 .font(.system(size: 10))
                 .foregroundStyle(.red)
 
-            Button("Retry") {
-                viewModel.retry()
-            }
-            .font(.system(size: 10, weight: .medium))
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .controlSize(.mini)
+            Button("Retry", action: retry)
+                .font(.system(size: 10, weight: .medium))
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .controlSize(.mini)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

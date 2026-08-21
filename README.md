@@ -50,7 +50,8 @@ If you're looking for a **native Apple Watch Gemini client**, a **lightweight LL
 - **Adjustable Creativity (Temperature)** — A Precise → Balanced → Creative → Wild slider maps directly to the Gemini `temperature` parameter (0.0–1.0), with a one-tap reset to the default.
 - **Haptic Feedback** — Optional haptics on key interactions; toggleable in Settings.
 - **Double Tap Gesture Support** — Use the watchOS Double Tap gesture (Apple Watch Series 9, 10, and Ultra 2) to open the input field instantly.
-- **Action Button Integration (Apple Watch Ultra)** — Press the Action button, speak your question, read the reply as scrollable text — never spoken aloud. Follow-up buttons under the answer let you escalate to a smarter model or continue in the full chat. See [Action Button Setup](#action-button-setup-apple-watch-ultra).
+- **Action Button Integration (Apple Watch Ultra)** — Press the Action button, speak your question, read the reply as scrollable text — never spoken aloud. Recording stops on its own when you stop talking, so the whole flow costs one press and zero taps. Follow-up buttons under the answer let you escalate to a smarter model or continue in the full chat. See [Action Button Setup](#action-button-setup-apple-watch-ultra).
+- **Gemini-Side Speech Recognition** — Send audio straight to Gemini instead of relying on on-device dictation. Handles accents and mid-sentence language switching that watchOS dictation gets wrong, transcribes and answers in a single request, and shows the transcript first so you can see what was heard.
 - **Two-Tier Models for Free-Tier Keys** — A cheap "Everyday" model answers every message; one tap on **✦ Smart** re-sends the whole conversation to a stronger model. Keeps an AI Studio free-tier key viable without giving up quality when it matters.
 - **Customizable System Prompt** — Edit Gemini's persona, tone, and instructions right from the in-app Settings screen, with a reset-to-default button.
 - **Live Model Picker** — Switch between available Gemini models (e.g., `gemini-2.5-flash`, `gemini-2.5-pro`). The list is fetched live from the Gemini API and filtered to text-capable models.
@@ -181,14 +182,29 @@ Action button → speak → answer streams in as scrollable text
 
 1. Install/update Gemini Watch on your Apple Watch Ultra (or Ultra 2) at least once so the system indexes its App Intents.
 2. On the watch, open the **Shortcuts** app (or build it on your iPhone under the Shortcuts app's **Watch** tab — it syncs over).
-3. Create a shortcut with two steps, in order:
-   - **Dictate Text** — captures your spoken question with the watch mic.
-     - ⚠️ **Set `Stop Listening` to `After Short Pause`.** This is the whole difference between a zero-tap flow and having to tap "Done" every single time. If it's left on **On Tap**, dictation waits for a tap before it will hand the text over.
-   - **Ask Gemini** (listed under Gemini Watch's actions) — pass the **Dictated Text** output into its **Question** parameter.
+3. Create a shortcut containing a **single action: Ask Gemini**, with the **Question** field left **empty**. An empty question is the signal to record — the app opens straight into the mic.
 4. Name it (e.g. "Ask Gemini") and save.
 5. On the watch: **Settings → Action Button → Shortcut**, and pick it.
 
-There is no confirmation step anywhere in the chain: the intent never asks for confirmation, the question is already supplied so the system never prompts for it, and `QuickAskView` fires the request the moment it appears rather than waiting for input.
+There is no confirmation step anywhere in the chain: the intent never asks for confirmation, the empty question means the system never prompts for one, and recording starts the moment the screen appears.
+
+### Choosing who transcribes: Gemini or Apple
+
+The **Question** field on the Ask Gemini action decides this, and the two modes are genuinely different tradeoffs.
+
+| | **Gemini transcribes** (Question empty) | **Apple transcribes** (Dictate Text → Ask Gemini) |
+|---|---|---|
+| Setup | One action, Question left empty | Two actions; Dictate Text must use `Stop Listening: After Short Pause` |
+| Recognition | Gemini's ASR — far better with accents, and it handles switching languages mid-sentence | On-device dictation, locked to your current dictation language |
+| Sent to Google | ~16 kHz mono audio (≈32 tokens/sec, so a 10s question ≈320 tokens) | Text only |
+| Latency | Slightly higher — a few hundred KB uploads before the answer starts | Lower |
+| Taps | Zero | Zero, *only if* `After Short Pause` is set |
+
+**Use the empty-Question (Gemini) mode if on-device dictation mangles your speech** — that's what it's for. The text mode stays available and is marginally faster when dictation happens to work well for you.
+
+Either way it's still one request per question: in voice mode Gemini transcribes *and* answers in a single call. The transcript comes back on the first line, so you see what was heard before the answer finishes streaming, and it's saved as the user message — long-press to edit and regenerate if a word came out wrong.
+
+> Voice mode needs a model that accepts audio input. Both defaults do (`gemini-3.5-flash-lite` and `gemini-3.7-flash` take text, image, video, audio and PDF). If you switch the Everyday model to something text-only, voice asks will fail with an API error — use the text-mode Shortcut instead, or pick an audio-capable model.
 
 > No **Show Result** step is needed — Gemini Watch draws the answer itself, which is what makes the follow-up buttons possible. Shortcuts' own result card is text-only and can't carry them.
 >
@@ -242,6 +258,7 @@ Gemini Watch follows a lean MVVM architecture built entirely in SwiftUI. There i
 | `QuickAskRouter.swift` | Carries the dictated question from the intent into the UI, surviving a cold launch. |
 | `QuickAskView.swift` | The post-Action-button screen — streaming answer, crown scrolling, Smart / Continue / follow-up buttons. |
 | `MarkdownContent.swift` | Shared markdown/code/math renderer used by both `MessageView` and `QuickAskView`. |
+| `VoiceRecorder.swift` | Mic capture with level-based auto-stop, producing 16 kHz mono WAV for Gemini. |
 
 ### Data flow
 
@@ -298,11 +315,15 @@ Because the result card is text-only. Getting **Smart** and **Continue** buttons
 
 ### Who does the speech-to-text — watchOS or Gemini?
 
-**watchOS.** Apple's dictation transcribes your speech, and Gemini only ever receives text. No audio is uploaded, so nothing extra counts against your Gemini quota, and Apple's end-of-speech detection is what lets dictation stop on its own without a tap. The transcript is saved as a normal user message, so you can long-press to edit and regenerate if dictation mangles a technical term.
+**Your choice, and it's set by the Shortcut.** Leave the Ask Gemini action's **Question** field empty and the app records audio for Gemini to transcribe — much better with accents and mixed-language speech. Add a **Dictate Text** step instead and watchOS transcribes on-device, sending text only. See [Choosing who transcribes](#choosing-who-transcribes-gemini-or-apple).
+
+### If Gemini records the audio, how does it know when I've stopped talking?
+
+The app watches the microphone's input level and ends the take after about a second of silence, with a 30-second ceiling. That auto-stop is what keeps the flow tap-free — a "Stop" button would defeat the point. If you never say anything, it gives up after 6 seconds rather than recording your pocket.
 
 ### How many taps to get an answer?
 
-One Action-button press and zero screen taps — provided **Dictate Text** has `Stop Listening` set to `After Short Pause`. See [Action Button Setup](#action-button-setup-apple-watch-ultra).
+One Action-button press and zero screen taps, in both transcription modes. In text mode this depends on **Dictate Text** having `Stop Listening` set to `After Short Pause`. See [Action Button Setup](#action-button-setup-apple-watch-ultra).
 
 ### How do I keep my free AI Studio key from running out of quota?
 

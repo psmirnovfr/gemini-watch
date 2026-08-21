@@ -4,12 +4,16 @@ import Combine
 /// A single Action-button ask, waiting to be shown.
 struct QuickAskRequest: Identifiable, Equatable {
     let id: UUID
-    let question: String
+    /// Nil when the Shortcut supplied no text — the app records instead and
+    /// lets Gemini do the transcription.
+    let question: String?
 
-    init(id: UUID = UUID(), question: String) {
+    init(id: UUID = UUID(), question: String?) {
         self.id = id
         self.question = question
     }
+
+    var isVoice: Bool { (question ?? "").isEmpty }
 }
 
 /// Hands the dictated question from `AskGeminiIntent` to the UI.
@@ -26,24 +30,25 @@ final class QuickAskRouter: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private let pendingKey = "pending_quick_ask"
+    /// Marks a pending voice ask, which has no text to store.
+    private static let voiceSentinel = "\u{0}voice"
 
     private init() {}
 
-    /// Called from the App Intent.
-    func submit(question: String) {
-        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        defaults.set(trimmed, forKey: pendingKey)
-        request = QuickAskRequest(question: trimmed)
+    /// Called from the App Intent. A nil or empty question means "record it".
+    func submit(question: String?) {
+        let trimmed = (question ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        defaults.set(trimmed.isEmpty ? Self.voiceSentinel : trimmed, forKey: pendingKey)
+        request = QuickAskRequest(question: trimmed.isEmpty ? nil : trimmed)
     }
 
-    /// Called by the root view on appear, to catch a question that arrived
-    /// before the UI existed.
+    /// Called by the root view on appear, to catch an ask that arrived before
+    /// the UI existed.
     func consumePendingIfNeeded() {
         guard request == nil,
               let pending = defaults.string(forKey: pendingKey),
               !pending.isEmpty else { return }
-        request = QuickAskRequest(question: pending)
+        request = QuickAskRequest(question: pending == Self.voiceSentinel ? nil : pending)
     }
 
     /// Called once the question is actually on screen. Drops only the persisted

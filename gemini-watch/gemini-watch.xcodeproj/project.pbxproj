@@ -323,6 +323,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "gemini-watch";
 				INFOPLIST_KEY_NSSiriUsageDescription = "Used to run the \"Ask Gemini\" Shortcut from the Action button and Siri.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Records your spoken question so Gemini can transcribe and answer it.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -357,6 +358,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "gemini-watch";
 				INFOPLIST_KEY_NSSiriUsageDescription = "Used to run the \"Ask Gemini\" Shortcut from the Action button and Siri.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Records your spoken question so Gemini can transcribe and answer it.";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
 				INFOPLIST_KEY_WKWatchOnly = YES;
 				LD_RUNPATH_SEARCH_PATHS = (

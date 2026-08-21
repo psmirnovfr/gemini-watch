@@ -19,6 +19,19 @@ enum StreamEvent: Sendable {
     case sources([GroundingSource])
 }
 
+/// Audio attached to the newest user turn. Gemini transcribes it server-side,
+/// so nothing depends on the watch's own speech recognition.
+struct AudioAttachment: Sendable {
+    let mimeType: String
+    let base64Data: String
+
+    init?(fileURL: URL, mimeType: String) {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        self.mimeType = mimeType
+        self.base64Data = data.base64EncodedString()
+    }
+}
+
 actor GeminiService {
     private let baseURL = "https://generativelanguage.googleapis.com/v1beta/models/"
 
@@ -40,10 +53,11 @@ actor GeminiService {
 
     func streamGenerateContent(
         messages: [Message],
-        model: String = "gemini-2.5-flash",
+        model: String = AppSettings.defaultFastModel,
         systemPrompt: String = AppSettings.defaultSystemPrompt,
         temperature: Double = 0.7,
-        enableWebSearch: Bool = false
+        enableWebSearch: Bool = false,
+        audio: AudioAttachment? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         return AsyncThrowingStream { continuation in
             let requestTask = Task {
@@ -74,10 +88,28 @@ actor GeminiService {
                 }
                 contextMessages = deduped
 
+                var contents = contextMessages.map { message in
+                    Content(role: message.role.rawValue, parts: [Part(text: message.text)])
+                }
+
+                // Attach audio to the newest user turn. A voice turn usually
+                // carries no text at all, so drop the empty text part rather
+                // than sending a blank string alongside the clip.
+                if let audio {
+                    let audioPart = Part(inline_data: InlineData(
+                        mime_type: audio.mimeType,
+                        data: audio.base64Data
+                    ))
+                    if var last = contents.last, last.role == MessageRole.user.rawValue {
+                        last.parts = last.parts.filter { !($0.text ?? "").isEmpty } + [audioPart]
+                        contents[contents.count - 1] = last
+                    } else {
+                        contents.append(Content(role: MessageRole.user.rawValue, parts: [audioPart]))
+                    }
+                }
+
                 let geminiRequest = GeminiRequest(
-                    contents: contextMessages.map { message in
-                        Content(role: message.role.rawValue, parts: [Part(text: message.text)])
-                    },
+                    contents: contents,
                     system_instruction: Content(role: "system", parts: [
                         Part(text: systemPrompt)
                     ]),
@@ -89,7 +121,9 @@ actor GeminiService {
                 request.httpMethod = "POST"
                 request.addValue("application/json", forHTTPHeaderField: "Content-Type")
                 request.addValue(key, forHTTPHeaderField: "x-goog-api-key")
-                request.timeoutInterval = 20
+                // A voice turn ships a few hundred KB of PCM; 20s is fine for
+                // text but can strand an audio upload on watch LTE.
+                request.timeoutInterval = audio == nil ? 20 : 45
 
                 do {
                     request.httpBody = try JSONEncoder().encode(geminiRequest)
@@ -235,11 +269,24 @@ private struct Candidate: Decodable, Sendable {
 
 private struct Content: Codable, Sendable {
     var role: String?
-    let parts: [Part]
+    var parts: [Part]
 }
 
 private struct Part: Codable, Sendable {
-    let text: String?
+    var text: String?
+    var inline_data: InlineData?
+
+    init(text: String? = nil, inline_data: InlineData? = nil) {
+        self.text = text
+        self.inline_data = inline_data
+    }
+}
+
+/// Base64 audio inlined in the request. `JSONEncoder` omits the nil sibling
+/// field, so a text part never carries an empty `inline_data` and vice versa.
+private struct InlineData: Codable, Sendable {
+    let mime_type: String
+    let data: String
 }
 
 // MARK: - Grounding

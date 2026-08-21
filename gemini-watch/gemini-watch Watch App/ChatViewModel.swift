@@ -65,6 +65,28 @@ class ChatViewModel: ObservableObject {
     /// Kept separate from `resetChat` + `sendMessage` so the conversation is
     /// created and titled in one pass, before any UI observes an empty state.
     func startQuickAsk(_ question: String) {
+        beginQuickAskConversation()
+        sendMessage(question)
+    }
+
+    /// Voice variant: the question is a recording rather than text, so Gemini
+    /// transcribes and answers in a single request. The user message starts
+    /// empty and is backfilled with the transcript as it streams in.
+    func startVoiceAsk(audioURL: URL, mimeType: String) {
+        beginQuickAskConversation()
+
+        guard let attachment = AudioAttachment(fileURL: audioURL, mimeType: mimeType) else {
+            errorMessage = "Couldn't read the recording."
+            return
+        }
+
+        let placeholder = Message(role: .user, text: "")
+        messages = [placeholder]
+        voiceMessageId = placeholder.id
+        processRequest(audio: attachment)
+    }
+
+    private func beginQuickAskConversation() {
         streamTask?.cancel()
         streamTask = nil
         errorMessage = nil
@@ -72,13 +94,12 @@ class ChatViewModel: ObservableObject {
         suggestions = []
         streamingMessageId = nil
         lastResponseModel = nil
+        voiceMessageId = nil
         messages = []
 
         let newConvo = Conversation()
         conversationId = newConvo.id
         persistence.saveConversation(newConvo)
-
-        sendMessage(question)
     }
 
     func resetChat() {
@@ -202,7 +223,37 @@ class ChatViewModel: ObservableObject {
         processRequest(modelOverride: smartModel)
     }
 
-    private func processRequest(modelOverride: String? = nil) {
+    // MARK: - Voice Turns
+
+    /// The user message awaiting a transcript, if this turn started as audio.
+    private var voiceMessageId: UUID?
+
+    /// Appended to the user's own system prompt for voice turns. Asking for the
+    /// transcript on the first line means it streams in before the answer — the
+    /// user sees what Gemini heard almost immediately, which is the confirmation
+    /// Apple's dictation sheet used to provide.
+    private static let voiceInstruction = """
+
+        The user's message is spoken audio. Reply in exactly this shape:
+        First line: `TRANSCRIPT: ` followed by a verbatim transcript of what \
+        the user said, in the language they said it. Then a blank line. Then \
+        your answer, following all the formatting rules above.
+        """
+
+    /// Guard against a model that ignores the format — don't withhold the
+    /// answer forever waiting for a first line that will never come.
+    private static let transcriptGiveUpLength = 400
+
+    private func applyTranscript(_ transcript: String) {
+        defer { voiceMessageId = nil }
+        guard let id = voiceMessageId,
+              let index = messages.firstIndex(where: { $0.id == id }) else { return }
+
+        let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        messages[index].text = cleaned.isEmpty ? "🎤 Voice message" : cleaned
+    }
+
+    private func processRequest(modelOverride: String? = nil, audio: AudioAttachment? = nil) {
         streamTask?.cancel()
         isLoading = true
         errorMessage = nil
@@ -210,6 +261,10 @@ class ChatViewModel: ObservableObject {
         // Read from the injected store (reactive, no disk I/O) or fall back (#5)
         let settings = settingsStore?.settings ?? persistence.loadSettings()
         let requestModel = modelOverride ?? settings.modelName
+        let isVoiceTurn = audio != nil
+        let systemPrompt = isVoiceTurn
+            ? settings.systemPrompt + Self.voiceInstruction
+            : settings.systemPrompt
 
         // Subtle "request sent" cue — matches Google's own Gemini apps.
         if settings.hapticsEnabled {
@@ -221,14 +276,19 @@ class ChatViewModel: ObservableObject {
             var messageIndex: Int? = nil
             var lastUpdate = Date()
             var latestSources: [GroundingSource] = []
+            // Voice turns prepend a TRANSCRIPT line; hold text back until that
+            // line resolves so it never leaks into the visible answer.
+            var transcriptBuffer = ""
+            var transcriptResolved = !isVoiceTurn
 
             do {
                 let stream = await geminiService.streamGenerateContent(
                     messages: messages,
                     model: requestModel,
-                    systemPrompt: settings.systemPrompt,
+                    systemPrompt: systemPrompt,
                     temperature: settings.temperature,
-                    enableWebSearch: settings.webSearchEnabled
+                    enableWebSearch: settings.webSearchEnabled,
+                    audio: audio
                 )
                 for try await event in stream {
                     if Task.isCancelled { return }
@@ -241,7 +301,37 @@ class ChatViewModel: ObservableObject {
                         }
 
                     case .text(let chunk):
-                        fullResponse += chunk
+                        if !transcriptResolved {
+                            transcriptBuffer += chunk
+                            if let newline = transcriptBuffer.firstIndex(of: "\n") {
+                                let firstLine = String(transcriptBuffer[..<newline])
+                                    .trimmingCharacters(in: .whitespaces)
+                                let remainder = String(transcriptBuffer[transcriptBuffer.index(after: newline)...])
+
+                                if let range = firstLine.range(of: "TRANSCRIPT:", options: .caseInsensitive) {
+                                    applyTranscript(String(firstLine[range.upperBound...]))
+                                    // Drop the blank separator line so the
+                                    // answer doesn't render with a leading gap.
+                                    fullResponse += remainder.drop(while: \.isNewline)
+                                } else {
+                                    // Model ignored the format — keep every
+                                    // token as answer rather than losing it.
+                                    applyTranscript("")
+                                    fullResponse += transcriptBuffer
+                                }
+                                transcriptResolved = true
+                                transcriptBuffer = ""
+                            } else if transcriptBuffer.count > Self.transcriptGiveUpLength {
+                                applyTranscript("")
+                                fullResponse += transcriptBuffer
+                                transcriptResolved = true
+                                transcriptBuffer = ""
+                            } else {
+                                continue
+                            }
+                        } else {
+                            fullResponse += chunk
+                        }
                         let now = Date()
                         if !fullResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             if messageIndex == nil || now.timeIntervalSince(lastUpdate) > 0.1 {
@@ -258,6 +348,19 @@ class ChatViewModel: ObservableObject {
                             }
                         }
                     }
+                }
+
+                // A short reply can end before any newline arrives — flush what
+                // was held back rather than dropping it.
+                if !transcriptResolved {
+                    if let range = transcriptBuffer.range(of: "TRANSCRIPT:", options: .caseInsensitive) {
+                        applyTranscript(String(transcriptBuffer[range.upperBound...]))
+                    } else {
+                        applyTranscript("")
+                        fullResponse += transcriptBuffer
+                    }
+                    transcriptResolved = true
+                    transcriptBuffer = ""
                 }
 
                 // Final update
@@ -295,6 +398,11 @@ class ChatViewModel: ObservableObject {
                 }
             } catch {
                 streamingMessageId = nil
+                // Don't strand a voice turn behind an empty user bubble — a
+                // failed upload must still leave something retryable on screen.
+                if !transcriptResolved {
+                    applyTranscript("")
+                }
                 if !Task.isCancelled {
                     errorMessage = error.localizedDescription
                     isLoading = false
