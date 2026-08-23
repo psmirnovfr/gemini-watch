@@ -126,12 +126,9 @@ struct QuickAskView: View {
 
     // MARK: - Recording
 
-    private var isRecording: Bool {
-        switch recorder.state {
-        case .listening, .capturing: return true
-        default: return false
-        }
-    }
+    /// Covers permission, session activation and the live take — the recorder
+    /// owns the whole screen for all of it, so there is never a blank frame.
+    private var isRecording: Bool { recorder.state.isBusy }
 
     private var recordingError: String? {
         if case .failed(let message) = recorder.state { return message }
@@ -163,7 +160,7 @@ struct QuickAskView: View {
             ZStack {
                 Circle()
                     .fill(GeminiBrand.gradient)
-                    .opacity(0.25 + 0.5 * recorder.level)
+                    .opacity(recorder.state == .preparing ? 0.2 : 0.25 + 0.5 * recorder.level)
                     .frame(width: 46 + CGFloat(recorder.level) * 16)
                 Image(systemName: "mic.fill")
                     .font(.system(size: 18, weight: .semibold))
@@ -172,18 +169,30 @@ struct QuickAskView: View {
             .frame(height: 66)
             .animation(.easeOut(duration: 0.12), value: recorder.level)
 
-            Text(recorder.state == .capturing ? "Listening…" : "Speak now")
+            Text(micHeadline)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
 
-            Text("Stops when you do")
-                .font(.system(size: 8))
-                .foregroundStyle(.tertiary)
+            if recorder.state != .preparing {
+                Text("Stops when you do")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.tertiary)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 8)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Listening. Recording stops automatically when you stop speaking.")
+        .accessibilityLabel(recorder.state == .preparing
+            ? "Preparing the microphone."
+            : "Listening. Recording stops automatically when you stop speaking.")
+    }
+
+    private var micHeadline: String {
+        switch recorder.state {
+        case .preparing: return "Getting ready…"
+        case .capturing: return "Listening…"
+        default:         return "Speak now"
+        }
     }
 
     // MARK: - Question

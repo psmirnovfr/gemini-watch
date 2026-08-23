@@ -13,12 +13,14 @@ struct gemini_watchApp: App {
                 .environmentObject(speaker)
         }
     }
+}
 
-    init() {
-        requestNotificationPermission()
-    }
-
-    private func requestNotificationPermission() {
+enum NotificationPermission {
+    /// Deliberately *not* requested at launch. An Action-button press can be a
+    /// user's first ever launch, and a permission alert there would land in the
+    /// middle of the one flow that must cost zero taps. `ConversationListView`
+    /// asks instead, and only when no Quick Ask is on screen.
+    static func requestIfIdle() {
         UNUserNotificationCenter.current()
             .requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }

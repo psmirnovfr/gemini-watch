@@ -11,6 +11,8 @@ Gemini Watch is a standalone watchOS SwiftUI app that talks directly to the Goog
 ```text
 .
 ├── README.md
+├── BUILDING.md
+├── AGENTS.md
 ├── LICENSE
 ├── .gitignore
 └── gemini-watch/
@@ -279,6 +281,16 @@ Then verify Xcode sees it. Because this project uses a synchronized root group, 
 
 ## Testing And Validation
 
+**Nothing in this repo has been compiled or run.** It was written without a
+macOS toolchain. `BUILDING.md` carries the ranked list of unverified areas and
+the full verification checklist — read it before assuming any code path works,
+and update it as things get confirmed on hardware.
+
+The single most important behaviour to protect: **Action button press -> speak
+-> read answer must cost one press and zero screen taps**, with no blank frame
+between launch and the mic going live. Any change that adds a tap, an alert, or
+a confirmation to that path is a regression regardless of what else it improves.
+
 There is currently no dedicated test target in the project.
 
 Preferred validation:
@@ -329,7 +341,8 @@ When validation cannot be run, state the reason clearly in the final response.
 ## Git And Review Hygiene
 
 - Keep changes focused on the requested task.
-- Do not stage unrelated files, especially `.DS_Store`, `xcuserdata/`, local build products, or personal simulator files.
+- Do not stage unrelated files, especially `.DS_Store`, `xcuserdata/`, local build products, or personal simulator files. `.gitignore` covers these; if one shows up in `git status`, fix the ignore rather than committing it.
+- This project began as a fork of `cyroz1/gemini-watch`. Leave the original MIT copyright in `LICENSE` intact — the licence requires it.
 - Do not commit `Secrets.plist`.
 - Do not rewrite user changes unless explicitly asked.
 - If the tree is already dirty, inspect it before staging and stage only intended files.

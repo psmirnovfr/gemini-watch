@@ -16,12 +16,25 @@ final class VoiceRecorder: NSObject, ObservableObject {
 
     enum State: Equatable {
         case idle
+        /// Asking for permission and activating the audio session. Distinct
+        /// from `.idle` so the UI has something to show during the gap between
+        /// launch and a live mic — otherwise the screen is blank exactly when
+        /// the user is about to start talking.
+        case preparing
         /// Mic is live but the user hasn't started talking yet.
         case listening
         /// Speech detected — recording in earnest.
         case capturing
         case finished(URL)
         case failed(String)
+
+        /// True while the recorder owns the screen.
+        var isBusy: Bool {
+            switch self {
+            case .preparing, .listening, .capturing: return true
+            case .idle, .finished, .failed: return false
+            }
+        }
     }
 
     @Published private(set) var state: State = .idle
@@ -66,15 +79,18 @@ final class VoiceRecorder: NSObject, ObservableObject {
     // MARK: - Lifecycle
 
     func start() async {
+        // Set synchronously so the UI has state to render before the first
+        // await — permission and session activation can take a noticeable
+        // moment on a cold launch.
+        state = .preparing
+
         guard await requestPermission() else {
             state = .failed("Microphone access denied. Enable it in Settings.")
             return
         }
 
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.record, mode: .measurement)
-            try session.setActive(true)
+            try await activateSession()
 
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("quick-ask-\(UUID().uuidString).wav")
@@ -196,6 +212,30 @@ final class VoiceRecorder: NSObject, ObservableObject {
         discardRecording()
         level = 0
         state = .failed(reason)
+    }
+
+    /// Launching straight from the Action button means the audio session may be
+    /// activated before the app is fully foregrounded, which throws. Retry a
+    /// couple of times before giving up rather than failing the whole ask on a
+    /// race the user can't see or do anything about.
+    private func activateSession() async throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.record, mode: .measurement)
+
+        var lastError: Error?
+        for attempt in 0..<3 {
+            do {
+                try session.setActive(true)
+                return
+            } catch {
+                lastError = error
+                try? await Task.sleep(nanoseconds: UInt64(0.25 * 1_000_000_000) * UInt64(attempt + 1))
+            }
+        }
+        throw lastError ?? NSError(
+            domain: "VoiceRecorder", code: -1,
+            userInfo: [NSLocalizedDescriptionKey: "Couldn't activate the microphone."]
+        )
     }
 
     private func deactivateSession() {

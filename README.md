@@ -43,7 +43,7 @@ If you're looking for a **native Apple Watch Gemini client**, a **lightweight LL
 
 - **Real-time Streaming Chat** — Tokens appear as Gemini generates them, with an animated typing cursor. Built on Server-Sent Events (SSE) from the Gemini streaming endpoint.
 - **Full Conversation History** — Every chat is saved as an individual JSON file on the watch and browsable from a scrollable list. Swipe any conversation to delete it; pin important chats to the top.
-- **Message Editing & Regeneration** — Long-press any user message to edit it and regenerate Gemini's reply from that point.
+- **Message Editing & Regeneration** — Long-press any user message to edit it and regenerate Gemini's reply from that point — including a voice message, once its transcript arrives.
 - **Search On Demand, Not By Default** — Read the cheap answer first, then tap 🔍 if it needs backing up. The lite model writes several targeted queries, they run in parallel against Tavily, and the results come back as a cited answer. Keeps your Gemini key on the free tier. See [Web Search](#web-search).
 - **Context-Aware Quick Replies** — Smart suggestion chips appear after each response, tailored to the content (code, lists, follow-up questions, or general conversation). Toggleable from Settings.
 - **Markdown & LaTeX Rendering** — Code blocks with language labels, bold and italic text, inline math (`$…$`) and block math (`$$…$$`), powered by a pre-compiled regex parser with result caching for smooth scrolling.
@@ -55,7 +55,7 @@ If you're looking for a **native Apple Watch Gemini client**, a **lightweight LL
 - **Gemini-Side Speech Recognition** — Send audio straight to Gemini instead of relying on on-device dictation. Handles accents and mid-sentence language switching that watchOS dictation gets wrong, transcribes and answers in a single request, and shows the transcript first so you can see what was heard.
 - **Two-Tier Models for Free-Tier Keys** — A cheap "Everyday" model answers every message; one tap on **✦ Smart** re-sends the whole conversation to a stronger model. Keeps an AI Studio free-tier key viable without giving up quality when it matters.
 - **Customizable System Prompt** — Edit Gemini's persona, tone, and instructions right from the in-app Settings screen, with a reset-to-default button.
-- **Live Model Picker** — Switch between available Gemini models (e.g., `gemini-2.5-flash`, `gemini-2.5-pro`). The list is fetched live from the Gemini API and filtered to text-capable models.
+- **Live Model Picker** — Pick the Everyday and Smart models from the list your API key can actually access, fetched live from the Gemini API.
 - **Clear All Chats** — One-tap bulk delete with a confirmation dialog in the Settings "Danger Zone".
 - **40mm / 41mm Optimized** — Compact typography, tight spacing, and carefully tuned tap targets designed for the smallest Apple Watch screens.
 - **100% On-Device Storage** — Conversations never leave your watch except when sent to the Gemini API itself.
@@ -88,7 +88,7 @@ If you're looking for a **native Apple Watch Gemini client**, a **lightweight LL
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/cyroz1/gemini-watch.git
+git clone https://github.com/psmirnovfr/gemini-watch.git
 cd gemini-watch
 ```
 
@@ -145,7 +145,7 @@ Open **Settings** from the conversation list to configure:
 
 | Setting | What it does |
 |---|---|
-| **AI Model** | Picker of Gemini models your API key can access (e.g. `gemini-2.5-flash`, `gemini-2.5-pro`). Fetched live from the API. |
+| **Everyday / Smart models** | Two pickers, both from the live model list. Everyday answers every message; Smart runs only when you tap it. |
 | **Speech → Speed** | Text-to-speech rate — Slow, Normal, or Fast. |
 | **Creativity** | Maps to the Gemini `temperature` parameter (0.0–1.0). Labels: Precise, Balanced, Creative, Wild. Includes a **Reset to Default** button (0.7). |
 | **Haptics** | Toggle haptic feedback on interactions. |
@@ -342,9 +342,9 @@ Yes — the app is MIT-licensed and free. You only pay Google for any API usage 
 
 Any Apple Watch running **watchOS 11 or later**. The layout is tuned for 40mm and 41mm cases but scales up to 44mm, 45mm, 49mm (Ultra), and 42mm/46mm Series 10.
 
-### Can I use a different model, like `gemini-2.5-pro`?
+### Can I use a different model?
 
-Yes. Open **Settings → Model** to pick from any model your API key has access to. The list is fetched live from the Gemini API.
+Yes. **Settings → AI Models** has two pickers — Everyday and Smart — populated from whatever your API key can access. Defaults are `gemini-3.5-flash-lite` and `gemini-3.7-flash`; if Google's lineup shifts, changing them is two taps, not a code change.
 
 ### Does it support images, voice input, or vision?
 
@@ -406,7 +406,9 @@ No. Gemini Watch is an **unofficial, community-built** open-source client. "Gemi
 
 ## Contributing
 
-Contributions, bug reports, and feature requests are welcome. Please open an issue or submit a pull request on [GitHub](https://github.com/cyroz1/gemini-watch).
+Contributions, bug reports, and feature requests are welcome. Please open an issue or submit a pull request on [GitHub](https://github.com/psmirnovfr/gemini-watch).
+
+If you're building this for the first time, start with **[BUILDING.md](BUILDING.md)** — it covers Xcode setup, the Action-button Shortcut, and what still needs verifying on real hardware.
 
 Good first contributions:
 
@@ -419,7 +421,9 @@ Good first contributions:
 
 ## License
 
-Released under the [MIT License](LICENSE). Copyright © 2026 cyroz.
+Released under the [MIT License](LICENSE).
+
+Originally forked from [cyroz1/gemini-watch](https://github.com/cyroz1/gemini-watch) and substantially rewritten since — the Action-button flow, Gemini-side speech recognition, two-tier models, and on-demand search are new here. The original MIT copyright is retained in [LICENSE](LICENSE) as the licence requires.
 
 ---
 

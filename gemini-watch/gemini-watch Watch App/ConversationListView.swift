@@ -68,6 +68,11 @@ struct ConversationListView: View {
             .onAppear {
                 refreshList()
                 quickAsk.consumePendingIfNeeded()
+                // Only once the list is genuinely the visible screen — never
+                // behind a Quick Ask, where an alert would cost a tap.
+                if quickAsk.request == nil {
+                    NotificationPermission.requestIfIdle()
+                }
             }
         }
         // Action-button asks take over the whole screen — a press should land
