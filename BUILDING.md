@@ -48,11 +48,19 @@ open gemini-watch/gemini-watch.xcodeproj
 
 Select the **gemini-watch Watch App** scheme, pick a watchOS simulator, ⌘R.
 
-**Signing:** `DEVELOPMENT_TEAM` is intentionally empty in the committed project
-so the repo isn't tied to one Apple developer account. On first build, Xcode
-asks you to pick your own team under **Signing & Capabilities** (automatic
-signing). That choice lands in `xcuserdata/`, which is git-ignored — so it stays
-local and never comes back as a diff. Simulator builds work without a team.
+**Signing and identity.** This project began as a fork, and both the signing
+team and the bundle identifiers were inherited from the upstream author. Both
+have been reset:
+
+- `DEVELOPMENT_TEAM` is empty, so the repo isn't tied to any one Apple developer
+  account. On first build Xcode asks you to pick your team under **Signing &
+  Capabilities** (automatic signing), and stores the choice in git-ignored
+  `xcuserdata/` — local only, never a diff. Simulator builds need no team.
+- `PRODUCT_BUNDLE_IDENTIFIER` is `psmirnovfr.gemini-watch[.watchkitapp]`.
+
+**If you fork this**, change the bundle identifiers to a namespace you control
+before building to a device — two apps can't share one, and you can't sign
+someone else's namespace with your team.
 
 The project uses a **file-system synchronized root group**, so the Swift files
 added over this project's history should be picked up automatically. If any are
