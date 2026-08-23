@@ -97,8 +97,9 @@ struct AppSettings: Codable, Equatable {
     var suggestionsEnabled: Bool
     var systemPrompt: String
     var temperature: Double
-    /// Enable Gemini's `google_search` tool for grounded answers with citations.
-    var webSearchEnabled: Bool
+    /// How many search queries the cheap model writes when you tap Search.
+    /// More angles cost more Tavily credits — one per query.
+    var searchQueryCount: Int
     /// The escalation model behind the "Smart" button — used only when the
     /// cheap answer isn't good enough, so it stays a deliberate, occasional cost.
     var smartModelName: String
@@ -106,7 +107,7 @@ struct AppSettings: Codable, Equatable {
     // Codable back-compat — older persisted settings don't have the newer keys.
     private enum CodingKeys: String, CodingKey {
         case modelName, speechRate, hapticsEnabled, suggestionsEnabled
-        case systemPrompt, temperature, webSearchEnabled, smartModelName
+        case systemPrompt, temperature, searchQueryCount, smartModelName
     }
 
     init(modelName: String,
@@ -115,7 +116,7 @@ struct AppSettings: Codable, Equatable {
          suggestionsEnabled: Bool,
          systemPrompt: String,
          temperature: Double,
-         webSearchEnabled: Bool = false,
+         searchQueryCount: Int = AppSettings.defaultSearchQueryCount,
          smartModelName: String = AppSettings.defaultSmartModel) {
         self.modelName = modelName
         self.speechRate = speechRate
@@ -123,7 +124,7 @@ struct AppSettings: Codable, Equatable {
         self.suggestionsEnabled = suggestionsEnabled
         self.systemPrompt = systemPrompt
         self.temperature = temperature
-        self.webSearchEnabled = webSearchEnabled
+        self.searchQueryCount = searchQueryCount
         self.smartModelName = smartModelName
     }
 
@@ -135,7 +136,8 @@ struct AppSettings: Codable, Equatable {
         suggestionsEnabled = try c.decode(Bool.self, forKey: .suggestionsEnabled)
         systemPrompt = try c.decode(String.self, forKey: .systemPrompt)
         temperature = try c.decode(Double.self, forKey: .temperature)
-        webSearchEnabled = try c.decodeIfPresent(Bool.self, forKey: .webSearchEnabled) ?? false
+        searchQueryCount = try c.decodeIfPresent(Int.self, forKey: .searchQueryCount)
+            ?? AppSettings.defaultSearchQueryCount
         smartModelName = try c.decodeIfPresent(String.self, forKey: .smartModelName) ?? AppSettings.defaultSmartModel
     }
 
@@ -146,6 +148,9 @@ struct AppSettings: Codable, Equatable {
     static let defaultFastModel = "gemini-3.5-flash-lite"
     static let defaultSmartModel = "gemini-3.7-flash"
 
+    static let defaultSearchQueryCount = 3
+    static let searchQueryCountRange = 1...5
+
     static let `default` = AppSettings(
         modelName: defaultFastModel,
         speechRate: 0.5,
@@ -153,7 +158,7 @@ struct AppSettings: Codable, Equatable {
         suggestionsEnabled: true,
         systemPrompt: defaultSystemPrompt,
         temperature: 0.7,
-        webSearchEnabled: false,
+        searchQueryCount: defaultSearchQueryCount,
         smartModelName: defaultSmartModel
     )
 }

@@ -18,6 +18,7 @@ struct QuickAskView: View {
     @StateObject private var viewModel = ChatViewModel()
     @StateObject private var recorder = VoiceRecorder()
     @State private var didStart = false
+    @State private var isFollowUpRecording = false
     @EnvironmentObject private var settingsStore: AppSettingsStore
 
     var body: some View {
@@ -30,7 +31,10 @@ struct QuickAskView: View {
                 }
 
                 if let error = recordingError {
-                    errorBlock(error, retry: startVoiceCapture)
+                    errorBlock(error, retry: {
+                        if isFollowUpRecording { startFollowUpVoiceCapture() }
+                        else { startVoiceCapture() }
+                    })
                 } else if let error = viewModel.errorMessage {
                     errorBlock(error, retry: viewModel.retry)
                 } else if !isRecording {
@@ -108,7 +112,11 @@ struct QuickAskView: View {
             if settingsStore.settings.hapticsEnabled {
                 WKInterfaceDevice.current().play(.click)
             }
-            viewModel.startVoiceAsk(audioURL: url, mimeType: VoiceRecorder.mimeType)
+            if isFollowUpRecording {
+                viewModel.sendVoiceMessage(audioURL: url, mimeType: VoiceRecorder.mimeType)
+            } else {
+                viewModel.startVoiceAsk(audioURL: url, mimeType: VoiceRecorder.mimeType)
+            }
             recorder.discardRecording()
         }
         .onDisappear {
@@ -131,9 +139,15 @@ struct QuickAskView: View {
     }
 
     private func startVoiceCapture() {
-        Task {
-            await recorder.start()
-        }
+        isFollowUpRecording = false
+        Task { await recorder.start() }
+    }
+
+    /// The mic button: another spoken question, keeping this conversation's
+    /// context rather than starting fresh.
+    private func startFollowUpVoiceCapture() {
+        isFollowUpRecording = true
+        Task { await recorder.start() }
     }
 
     private var hasAnswer: Bool {
@@ -222,13 +236,24 @@ struct QuickAskView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else if viewModel.isLoading {
-            HStack(spacing: 6) {
-                ProgressView().scaleEffect(0.7)
-                Text(viewModel.searchQuery.map { "Searching “\($0)”…" } ?? "Thinking…")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.7)
+                    Text(viewModel.searchStatus ?? "Thinking…")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                // Showing the generated queries makes it obvious what was
+                // actually searched, and why an answer came back the way it did.
+                ForEach(viewModel.searchQueries, id: \.self) { query in
+                    Text("• \(query)")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 6)
         }
     }
@@ -250,70 +275,95 @@ struct QuickAskView: View {
 
     // MARK: - Actions
 
+    /// A 2x2 grid of icon buttons. Icons carry the meaning at this size — a row
+    /// of four would leave each target too narrow on a 40mm screen, and full
+    /// text labels would push the answer off the top.
     private var actionButtons: some View {
         VStack(spacing: 4) {
-            if viewModel.canEscalateToSmartModel {
-                Button {
-                    if settingsStore.settings.hapticsEnabled {
-                        WKInterfaceDevice.current().play(.click)
+            HStack(spacing: 4) {
+                if viewModel.isSearchAvailable {
+                    actionButton(
+                        icon: "magnifyingglass",
+                        label: "Search",
+                        tint: Color.green.opacity(0.3),
+                        enabled: viewModel.canSearch,
+                        hint: "Search the web and answer from the results"
+                    ) {
+                        viewModel.searchAndAnswer()
                     }
-                    viewModel.escalateToSmartModel()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "sparkle")
-                            .font(.system(size: 10))
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text("Smart")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("Re-ask \(viewModel.smartModelLabel)")
-                                .font(.system(size: 8))
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.white.opacity(0.1))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(GeminiBrand.gradient, lineWidth: 1)
-                    )
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Ask the smarter model, \(viewModel.smartModelLabel)")
+
+                actionButton(
+                    icon: "brain",
+                    label: "Smart",
+                    tint: Color.white.opacity(0.12),
+                    enabled: viewModel.canEscalateToSmartModel,
+                    bordered: true,
+                    hint: "Re-ask the smarter model, \(viewModel.smartModelLabel)"
+                ) {
+                    viewModel.escalateToSmartModel()
+                }
             }
 
-            Button {
-                if settingsStore.settings.hapticsEnabled {
-                    WKInterfaceDevice.current().play(.click)
+            HStack(spacing: 4) {
+                actionButton(
+                    icon: "mic.fill",
+                    label: "Ask",
+                    tint: Color.white.opacity(0.12),
+                    hint: "Record a new question"
+                ) {
+                    startFollowUpVoiceCapture()
                 }
-                if let id = viewModel.conversationId {
-                    onContinue(id, nil)
+
+                actionButton(
+                    icon: "bubble.left.and.bubble.right.fill",
+                    label: "Chat",
+                    tint: Color.blue.opacity(0.35),
+                    hint: "Continue this chat in the app"
+                ) {
+                    if let id = viewModel.conversationId {
+                        onContinue(id, nil)
+                    }
                 }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .font(.system(size: 10))
-                    Text("Continue")
-                        .font(.system(size: 11, weight: .semibold))
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.blue.opacity(0.35))
-                )
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Continue this chat in the app")
         }
         .padding(.top, 2)
+    }
+
+    private func actionButton(
+        icon: String,
+        label: String,
+        tint: Color,
+        enabled: Bool = true,
+        bordered: Bool = false,
+        hint: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            if settingsStore.settings.hapticsEnabled {
+                WKInterfaceDevice.current().play(.click)
+            }
+            action()
+        } label: {
+            VStack(spacing: 1) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .medium))
+                Text(label)
+                    .font(.system(size: 9, weight: .medium))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 10).fill(tint))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(bordered ? AnyShapeStyle(GeminiBrand.gradient) : AnyShapeStyle(Color.clear),
+                                  lineWidth: 1)
+            )
+            .opacity(enabled ? 1 : 0.35)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(hint)
     }
 
     // MARK: - Follow-ups

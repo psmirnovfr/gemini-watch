@@ -90,11 +90,10 @@ The expected plist keys are:
 
 ```text
 GEMINI_API_KEY      (required)
-TAVILY_API_KEY      (optional — selects the Tavily search backend)
-SEARCH_BACKEND      (optional — forces duckduckgo | tavily | gemini)
+TAVILY_API_KEY      (optional — enables the Search button)
 ```
 
-Only `GEMINI_API_KEY` is required. Web search works with no additional keys via the keyless DuckDuckGo backend, so a `Secrets.plist` containing just the Gemini key is a fully supported configuration — keep it that way.
+Only `GEMINI_API_KEY` is required. Without `TAVILY_API_KEY` the Search button is hidden rather than shown-and-broken, so a `Secrets.plist` containing just the Gemini key is a fully supported configuration — keep it that way.
 
 ## Architecture
 
@@ -130,7 +129,7 @@ Core responsibilities:
 - `QuickAskRouter.swift`: main-actor singleton carrying the pending question from the intent to the UI, mirrored to UserDefaults so a cold launch doesn't lose it.
 - `QuickAskView.swift`: the Action-button answer screen. Streams into its own `ChatViewModel`, renders scrollable text (Digital Crown), and offers Smart / Continue / follow-up chips. Never speaks its result.
 - `MarkdownContent.swift`: shared markdown/code/math renderer used by both `MessageView` and `QuickAskView`.
-- `SearchProvider.swift`: `SearchProvider` protocol, `DuckDuckGoSearchProvider` (keyless HTML scrape of the lite endpoint), `TavilySearchProvider` (JSON API), and `SearchBackend.configured()` which resolves a provider from `Secrets.plist`.
+- `SearchProvider.swift`: `SearchProvider` protocol, `TavilySearchProvider`, and `SearchBackend.configured()` which resolves a provider from `Secrets.plist`.
 - `VoiceRecorder.swift`: `AVAudioRecorder` capture at 16 kHz mono PCM with meter-driven auto-stop. Publishes `state` and a normalised `level` for the mic UI; writes to `temporaryDirectory` and deletes after upload.
 
 ## Data Flow
@@ -236,15 +235,14 @@ App Intents / Shortcuts (Action button flow):
 
 Web search:
 
-- Search exists as an external provider specifically to keep the Gemini key on the **free tier**. Gemini's `google_search` grounding has a free allowance only on billing-enabled projects, and enabling billing would start charging per token on every ordinary message. Do not "simplify" this by switching the default to `google_search` — that quietly moves the user onto the paid tier.
-- Search must stay **model-decided**, via the `web_search` function declaration. Never search unconditionally on every message: the free tier is 1,000 searches/month and most questions need none. Function calling itself is free, so a message that doesn't search costs what it always did.
-- Keep the tool-calling loop bounded by `maxToolRounds`. Each extra round is another round trip and another search credit.
-- A failed search must not sink the answer: `GeminiService` feeds the model an empty result set and lets it reply anyway. Preserve that.
+- Search is **user-initiated only**. `ChatViewModel.searchAndAnswer()` runs when the user taps Search — never automatically, and never as a tool the model can invoke on its own. The cheap answer comes first so the user can decide whether a search is worth the credits.
+- The flow is fixed: cheap model writes N queries -> parallel provider searches -> deduplicate by URL -> results fed back as context on the newest user turn. Do not collapse this into a single request, and do not search the user's raw text instead of generated queries — spoken questions make poor search queries, and a flash-lite call is cheaper than a wasted credit.
+- N comes from `AppSettings.searchQueryCount`, clamped to `searchQueryCountRange`. Each query costs one provider credit, so treat raising the default as a real cost decision.
+- Search results reach the model as an extra `Part` on the last user turn, scoped to that request. They are never written into `messages`, so they don't accumulate in conversation history or persist.
+- Sources map onto `GroundingSource` and are passed into `processRequest(sources:)`, so the existing citations UI works unchanged.
+- Search stays external specifically to keep the Gemini key on the **free tier**. Gemini's `google_search` grounding has a free allowance only on billing-enabled projects; do not reintroduce it as a default.
 - Adding a backend means writing one `SearchProvider` conforming struct plus a branch in `SearchBackend.configured()` — do not spread provider specifics into `GeminiService` or `ChatViewModel`.
-- Search must keep working with no key configured. `DuckDuckGoSearchProvider` is the zero-setup default; do not make any backend that needs an account or payment details the fallback.
-- `DuckDuckGoSearchProvider` parses HTML from `lite.duckduckgo.com/lite/` because no DuckDuckGo search API exists. Expect to fix its regexes when the markup changes — that is inherent to the approach, not a defect to redesign around. Keep the single backoff retry on 202/403/429 and the realistic `User-Agent`; both are load-bearing.
-- Search results reuse `GroundingSource`, so the existing citations UI works for both backends. Keep mapping to it rather than introducing a parallel type.
-- `.reset` exists because a model may emit preamble text before deciding to call the tool. Consumers must drop what they've accumulated when they see it, or the preamble gets concatenated onto the real answer.
+- When no provider is configured, `isSearchAvailable` is false and the button must stay hidden rather than failing on tap.
 
 Model tiers:
 
@@ -296,9 +294,10 @@ Preferred validation:
    - settings persist across relaunch
    - conversations persist and can be deleted
    - model picker failure is handled gracefully
-   - with a search key set, a current-events question triggers one search (the query is shown), sources appear, and an everyday question triggers none
-   - with no search key set, Web Search still falls back to Gemini grounding rather than erroring
-   - a failing search key still produces an answer instead of a dead end
+   - with a search key set, the Search button appears, shows the generated queries while running, and returns a cited answer with sources
+   - with no search key set, the Search button is absent rather than broken
+   - the Quick Ask action grid (Search / Smart / Ask / Chat) fits a 40mm screen without clipping, and disabled actions read as disabled
+   - the mic button records a follow-up into the same conversation rather than starting a new one
    - TTS starts and stops for model messages
    - Ask Gemini shortcut with an empty Question opens straight into the mic, stops on its own when you stop talking, and streams transcript-then-answer
    - Ask Gemini shortcut with Dictate Text supplying the Question skips recording entirely and sends text only

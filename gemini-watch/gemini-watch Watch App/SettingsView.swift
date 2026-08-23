@@ -102,17 +102,37 @@ struct SettingsView: View {
                         Text("Quick Replies")
                             .font(.caption2)
                     }
-                    Toggle(isOn: $settingsStore.settings.webSearchEnabled) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Web Search")
-                                .font(.caption2)
-                            Text(searchBackendLabel)
-                                .font(.system(size: 8))
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
                 } header: {
                     Text("Features")
+                        .font(.system(size: 9))
+                }
+
+                // Search
+                Section {
+                    if SearchBackend.configured() == nil {
+                        Text("Add TAVILY_API_KEY to Secrets.plist to enable the Search button.")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Queries per search: \(settingsStore.settings.searchQueryCount)")
+                                .font(.caption2)
+                            Slider(
+                                value: Binding(
+                                    get: { Double(settingsStore.settings.searchQueryCount) },
+                                    set: { settingsStore.settings.searchQueryCount = Int($0.rounded()) }
+                                ),
+                                in: Double(AppSettings.searchQueryCountRange.lowerBound)
+                                    ...Double(AppSettings.searchQueryCountRange.upperBound),
+                                step: 1
+                            )
+                        }
+                        Text(searchBackendLabel)
+                            .font(.system(size: 8))
+                            .foregroundStyle(.tertiary)
+                    }
+                } header: {
+                    Text("Search")
                         .font(.system(size: 9))
                 }
 
@@ -160,13 +180,12 @@ struct SettingsView: View {
         }
     }
 
-    /// Makes the active backend visible — they differ in reliability and in
-    /// who pays, so it shouldn't be a mystery which one is wired up.
+    /// Spells out the cost of a tap: one cheap model call to write the queries,
+    /// then one search credit per query.
     private var searchBackendLabel: String {
-        if let provider = SearchBackend.configured() {
-            return "Via \(provider.name) · Gemini stays free tier"
-        }
-        return "Gemini grounding · needs billing enabled"
+        let count = settingsStore.settings.searchQueryCount
+        let provider = SearchBackend.configured()?.name ?? "search"
+        return "Each search: 1 \(settingsStore.settings.modelName.shortModelLabel) call + \(count) \(provider) credit\(count == 1 ? "" : "s")"
     }
 
     private var speedLabel: String {

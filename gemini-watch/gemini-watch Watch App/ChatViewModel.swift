@@ -17,14 +17,15 @@ class ChatViewModel: ObservableObject {
     /// Model that produced the newest reply, so the UI can badge it and decide
     /// whether escalating to the smart model would actually change anything.
     @Published var lastResponseModel: String? = nil
-    /// The query Gemini chose to search for, while that search is running.
-    @Published var searchQuery: String? = nil
+    /// Human-readable progress while the search flow runs, e.g. "Searching…".
+    @Published var searchStatus: String? = nil
+    /// Queries the cheap model wrote, shown so it's clear what was searched.
+    @Published var searchQueries: [String] = []
 
     private let geminiService: GeminiService
     private let persistence: PersistenceManager
     private var streamTask: Task<Void, Never>?
-    /// Nil when no external search key is configured, in which case the service
-    /// falls back to Gemini's own grounding tool.
+    /// Nil when no search key is configured, which hides the Search button.
     private let searchProvider: SearchProvider?
 
     /// Injected settings store — avoids repeated disk reads on every request (#5).
@@ -64,7 +65,8 @@ class ChatViewModel: ObservableObject {
         isLoading = false
         suggestions = []
         streamingMessageId = nil
-        searchQuery = nil
+        searchStatus = nil
+        searchQueries = []
         lastResponseModel = messages.last(where: { $0.role == .model })?.modelName
     }
 
@@ -78,18 +80,28 @@ class ChatViewModel: ObservableObject {
     }
 
     /// Voice variant: the question is a recording rather than text, so Gemini
-    /// transcribes and answers in a single request. The user message starts
-    /// empty and is backfilled with the transcript as it streams in.
+    /// transcribes and answers in a single request.
     func startVoiceAsk(audioURL: URL, mimeType: String) {
         beginQuickAskConversation()
+        sendVoiceMessage(audioURL: audioURL, mimeType: mimeType)
+    }
 
+    /// Appends a spoken turn to the conversation already in progress — the mic
+    /// button's follow-up path, which keeps the existing context rather than
+    /// starting over. The user message starts empty and is backfilled with the
+    /// transcript as it streams in.
+    func sendVoiceMessage(audioURL: URL, mimeType: String) {
         guard let attachment = AudioAttachment(fileURL: audioURL, mimeType: mimeType) else {
             errorMessage = "Couldn't read the recording."
             return
         }
 
+        streamTask?.cancel()
+        suggestions = []
+        errorMessage = nil
+
         let placeholder = Message(role: .user, text: "")
-        messages = [placeholder]
+        messages.append(placeholder)
         voiceMessageId = placeholder.id
         processRequest(audio: attachment)
     }
@@ -101,7 +113,8 @@ class ChatViewModel: ObservableObject {
         editingMessageId = nil
         suggestions = []
         streamingMessageId = nil
-        searchQuery = nil
+        searchStatus = nil
+        searchQueries = []
         lastResponseModel = nil
         voiceMessageId = nil
         messages = []
@@ -120,7 +133,8 @@ class ChatViewModel: ObservableObject {
         editingMessageId = nil
         suggestions = []
         streamingMessageId = nil
-        searchQuery = nil
+        searchStatus = nil
+        searchQueries = []
         lastResponseModel = nil
 
         let newConvo = Conversation()
@@ -176,7 +190,8 @@ class ChatViewModel: ObservableObject {
         streamTask = nil
         isLoading = false
         streamingMessageId = nil
-        searchQuery = nil
+        searchStatus = nil
+        searchQueries = []
         // A stopped stream still leaves a usable partial reply, so record which
         // model produced it — otherwise "Smart" can't tell it has work to do.
         lastResponseModel = messages.last(where: { $0.role == .model })?.modelName
@@ -217,6 +232,110 @@ class ChatViewModel: ObservableObject {
 
     var smartModelLabel: String {
         currentSettings.smartModelName.shortModelLabel
+    }
+
+    // MARK: - Search
+
+    /// Hidden entirely when no search key is configured, so the button never
+    /// appears only to fail when tapped.
+    var isSearchAvailable: Bool { searchProvider != nil }
+
+    var canSearch: Bool {
+        isSearchAvailable && !isGenerating && messages.contains { $0.role == .user }
+    }
+
+    /// Search on demand rather than automatically.
+    ///
+    /// A flash-lite completion is cheaper than a search credit, so the cheap
+    /// model first turns the conversation into a few targeted queries — which
+    /// also beats searching the user's raw phrasing, since spoken questions
+    /// make poor search queries. Those run against the provider in parallel,
+    /// and the deduplicated results are handed back to the model as context.
+    ///
+    /// Cost per tap: 2 Gemini requests + one search credit per query.
+    func searchAndAnswer() {
+        guard let provider = searchProvider else { return }
+
+        let settings = currentSettings
+        let count = min(max(settings.searchQueryCount, AppSettings.searchQueryCountRange.lowerBound),
+                        AppSettings.searchQueryCountRange.upperBound)
+
+        streamTask?.cancel()
+        suggestions = []
+        errorMessage = nil
+        isLoading = true
+        searchQueries = []
+        searchStatus = "Writing queries…"
+
+        // Re-answering the same question: drop the un-searched reply first.
+        if messages.last?.role == .model {
+            messages.removeLast()
+        }
+
+        streamTask = Task {
+            do {
+                let queries = try await geminiService.generateSearchQueries(
+                    messages: messages,
+                    count: count,
+                    model: settings.modelName
+                )
+                if Task.isCancelled { return }
+
+                searchQueries = queries
+                searchStatus = queries.count == 1
+                    ? "Searching…"
+                    : "Searching \(queries.count) angles…"
+
+                // Run them together — sequential searches on watch latency
+                // would make this feel much slower than it needs to.
+                let results = await withTaskGroup(of: [SearchResult].self) { group in
+                    for query in queries {
+                        group.addTask {
+                            (try? await provider.search(query: query, maxResults: Self.resultsPerQuery)) ?? []
+                        }
+                    }
+                    var collected: [SearchResult] = []
+                    for await batch in group { collected.append(contentsOf: batch) }
+                    return collected
+                }
+                if Task.isCancelled { return }
+
+                // Overlapping queries return overlapping pages; keep the first
+                // occurrence of each URL so the model isn't fed duplicates.
+                var seen = Set<String>()
+                let unique = results.filter { seen.insert($0.url).inserted }
+
+                guard !unique.isEmpty else {
+                    isLoading = false
+                    searchStatus = nil
+                    errorMessage = "No search results. Try Continue instead."
+                    return
+                }
+
+                searchStatus = nil
+                processRequest(
+                    searchContext: Self.render(unique),
+                    sources: unique.map { GroundingSource(uri: $0.url, title: $0.title) }
+                )
+            } catch {
+                if !Task.isCancelled {
+                    isLoading = false
+                    searchStatus = nil
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private static let resultsPerQuery = 4
+
+    /// Flattened for the model: titles and snippets are what it needs to answer,
+    /// URLs so it can cite. Numbering matches the citation markers requested in
+    /// the prompt.
+    private static func render(_ results: [SearchResult]) -> String {
+        results.enumerated().map { index, result in
+            "[\(index + 1)] \(result.title)\n\(result.url)\n\(result.snippet)"
+        }.joined(separator: "\n\n")
     }
 
     /// Drop the cheap reply and re-send the *whole* conversation to the smart
@@ -264,7 +383,10 @@ class ChatViewModel: ObservableObject {
         messages[index].text = cleaned.isEmpty ? "🎤 Voice message" : cleaned
     }
 
-    private func processRequest(modelOverride: String? = nil, audio: AudioAttachment? = nil) {
+    private func processRequest(modelOverride: String? = nil,
+                                audio: AudioAttachment? = nil,
+                                searchContext: String? = nil,
+                                sources: [GroundingSource] = []) {
         streamTask?.cancel()
         isLoading = true
         errorMessage = nil
@@ -286,7 +408,7 @@ class ChatViewModel: ObservableObject {
             var fullResponse = ""
             var messageIndex: Int? = nil
             var lastUpdate = Date()
-            var latestSources: [GroundingSource] = []
+            var latestSources: [GroundingSource] = sources
             // Voice turns prepend a TRANSCRIPT line; hold text back until that
             // line resolves so it never leaks into the visible answer.
             var transcriptBuffer = ""
@@ -298,9 +420,8 @@ class ChatViewModel: ObservableObject {
                     model: requestModel,
                     systemPrompt: systemPrompt,
                     temperature: settings.temperature,
-                    enableWebSearch: settings.webSearchEnabled,
                     audio: audio,
-                    searchProvider: searchProvider
+                    searchContext: searchContext
                 )
                 for try await event in stream {
                     if Task.isCancelled { return }
@@ -312,22 +433,8 @@ class ChatViewModel: ObservableObject {
                             messages[idx].sources = sources
                         }
 
-                    case .searching(let query):
-                        searchQuery = query
-                        isLoading = true
-
-                    case .reset:
-                        // Preamble the model wrote before deciding to search.
-                        fullResponse = ""
-                        transcriptBuffer = ""
-                        if let idx = messageIndex {
-                            messages.remove(at: idx)
-                            messageIndex = nil
-                            streamingMessageId = nil
-                        }
-
                     case .text(let chunk):
-                        searchQuery = nil
+                        searchStatus = nil
                         if !transcriptResolved {
                             transcriptBuffer += chunk
                             if let newline = transcriptBuffer.firstIndex(of: "\n") {
@@ -405,7 +512,7 @@ class ChatViewModel: ObservableObject {
                 }
 
                 streamingMessageId = nil
-                searchQuery = nil
+                searchStatus = nil
                 isLoading = false
                 persistCurrentState()
 
@@ -426,7 +533,7 @@ class ChatViewModel: ObservableObject {
                 }
             } catch {
                 streamingMessageId = nil
-                searchQuery = nil
+                searchStatus = nil
                 // Don't strand a voice turn behind an empty user bubble — a
                 // failed upload must still leave something retryable on screen.
                 if !transcriptResolved {

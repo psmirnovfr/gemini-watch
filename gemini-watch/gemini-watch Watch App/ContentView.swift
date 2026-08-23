@@ -66,16 +66,10 @@ struct ContentView: View {
                             HStack(spacing: 6) {
                                 ProgressView()
                                     .scaleEffect(0.7)
-                                if let query = viewModel.searchQuery {
-                                    Text("Searching “\(query)”…")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(2)
-                                } else {
-                                    Text("Thinking…")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.secondary)
-                                }
+                                Text(viewModel.searchStatus ?? "Thinking…")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
                                 Spacer()
                             }
                             .padding(.horizontal, 6)
@@ -83,10 +77,10 @@ struct ContentView: View {
                             .id("loader")
                         }
 
-                        // Escalation + quick-reply suggestions
-                        if viewModel.canEscalateToSmartModel {
-                            smartChip
-                                .id("smart_chip")
+                        // Search / escalation actions, then quick replies
+                        if viewModel.canSearch || viewModel.canEscalateToSmartModel {
+                            actionChips
+                                .id("action_chips")
                                 .transition(.opacity)
                         }
 
@@ -242,35 +236,67 @@ struct ContentView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Smart Escalation Chip
+    // MARK: - Action Chips
 
-    /// Re-runs the whole conversation through the smarter model. Sits above the
-    /// quick replies because it acts on the answer you just read.
-    private var smartChip: some View {
+    /// Search and Smart, both acting on the answer you just read. Icon-led so
+    /// they stay legible when the labels get squeezed on a 40mm screen.
+    private var actionChips: some View {
+        HStack(spacing: 4) {
+            if viewModel.canSearch {
+                chip(icon: "magnifyingglass",
+                     title: "Search",
+                     fill: Color.green.opacity(0.25),
+                     bordered: false,
+                     hint: "Search the web and answer from the results") {
+                    viewModel.searchAndAnswer()
+                }
+            }
+            if viewModel.canEscalateToSmartModel {
+                chip(icon: "brain",
+                     title: viewModel.smartModelLabel,
+                     fill: Color.white.opacity(0.1),
+                     bordered: true,
+                     hint: "Re-ask the smarter model, \(viewModel.smartModelLabel)") {
+                    viewModel.escalateToSmartModel()
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func chip(icon: String,
+                      title: String,
+                      fill: Color,
+                      bordered: Bool,
+                      hint: String,
+                      action: @escaping () -> Void) -> some View {
         Button {
             if settingsStore.settings.hapticsEnabled {
                 WKInterfaceDevice.current().play(.click)
             }
-            viewModel.escalateToSmartModel()
+            action()
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "sparkle")
+            HStack(spacing: 3) {
+                Image(systemName: icon)
                     .font(.system(size: 9))
-                Text("Smart · \(viewModel.smartModelLabel)")
+                Text(title)
                     .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.white.opacity(0.1))
+            .background(fill)
             .clipShape(Capsule())
             .overlay(
-                Capsule().strokeBorder(GeminiBrand.gradient, lineWidth: 1)
+                Capsule().strokeBorder(
+                    bordered ? AnyShapeStyle(GeminiBrand.gradient) : AnyShapeStyle(Color.clear),
+                    lineWidth: 1
+                )
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Re-ask the smarter model, \(viewModel.smartModelLabel)")
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 4)
+        .accessibilityLabel(hint)
     }
 
     // MARK: - Suggestion Chips
