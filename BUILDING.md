@@ -48,6 +48,12 @@ open gemini-watch/gemini-watch.xcodeproj
 
 Select the **gemini-watch Watch App** scheme, pick a watchOS simulator, ⌘R.
 
+**Signing:** `DEVELOPMENT_TEAM` is intentionally empty in the committed project
+so the repo isn't tied to one Apple developer account. On first build, Xcode
+asks you to pick your own team under **Signing & Capabilities** (automatic
+signing). That choice lands in `xcuserdata/`, which is git-ignored — so it stays
+local and never comes back as a diff. Simulator builds work without a team.
+
 The project uses a **file-system synchronized root group**, so the Swift files
 added over this project's history should be picked up automatically. If any are
 missing from the build, check the target's Compile Sources phase before editing
