@@ -160,8 +160,8 @@ struct SettingsView: View {
         }
     }
 
-    /// Makes the active backend visible — the two differ in who pays and how
-    /// much quota there is, so it shouldn't be a mystery which one is wired up.
+    /// Makes the active backend visible — they differ in reliability and in
+    /// who pays, so it shouldn't be a mystery which one is wired up.
     private var searchBackendLabel: String {
         if let provider = SearchBackend.configured() {
             return "Via \(provider.name) · Gemini stays free tier"

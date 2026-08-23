@@ -44,7 +44,7 @@ If you're looking for a **native Apple Watch Gemini client**, a **lightweight LL
 - **Real-time Streaming Chat** — Tokens appear as Gemini generates them, with an animated typing cursor. Built on Server-Sent Events (SSE) from the Gemini streaming endpoint.
 - **Full Conversation History** — Every chat is saved as an individual JSON file on the watch and browsable from a scrollable list. Swipe any conversation to delete it; pin important chats to the top.
 - **Message Editing & Regeneration** — Long-press any user message to edit it and regenerate Gemini's reply from that point.
-- **Web Search That Keeps You On The Free Tier** — Gemini decides when a question needs the web, then the app runs the search through a pluggable provider (Tavily by default, free, no card) and feeds results back. Citations and source links included. Falls back to Gemini's built-in `google_search` grounding if you'd rather enable billing. See [Web Search](#web-search).
+- **Web Search That Keeps You On The Free Tier** — Gemini decides when a question needs the web, then the app runs the search through a pluggable provider and feeds results back, with citations and source links. Works with **zero setup** via a keyless DuckDuckGo backend; drop in a Tavily key for a stabler one. See [Web Search](#web-search).
 - **Context-Aware Quick Replies** — Smart suggestion chips appear after each response, tailored to the content (code, lists, follow-up questions, or general conversation). Toggleable from Settings.
 - **Markdown & LaTeX Rendering** — Code blocks with language labels, bold and italic text, inline math (`$…$`) and block math (`$$…$$`), powered by a pre-compiled regex parser with result caching for smooth scrolling.
 - **Text-to-Speech** — Tap any Gemini response to hear it spoken aloud via `AVSpeechSynthesizer`, with a Slow / Normal / Fast speech-rate slider.
@@ -244,16 +244,29 @@ So search runs through an external provider instead, and the Gemini key stays on
 
 ### Setup
 
-1. Get a free API key from [Tavily](https://tavily.com) — 1,000 searches/month, **no credit card**.
-2. Add it to `Secrets.plist` as `TAVILY_API_KEY` (see `Secrets.plist.example`).
-3. Turn on **Settings → Web Search**.
+**Just turn on Settings → Web Search.** There's nothing else to configure — the default backend is keyless.
 
 Settings shows which backend is live, so it's never ambiguous:
 
-| `Secrets.plist` contains | Backend used | Cost |
-|---|---|---|
-| `TAVILY_API_KEY` | Tavily, via function calling | Free — Gemini stays on free tier |
-| *(no search key)* | Gemini `google_search` grounding | Requires billing enabled |
+| `Secrets.plist` contains | Backend | Signup | Notes |
+|---|---|---|---|
+| *(nothing extra)* | **DuckDuckGo** | None | Default. No account, key, or card. Parses HTML, so it can break or rate-limit. |
+| `TAVILY_API_KEY` | **Tavily** | Account | Preferred automatically when present. Stable JSON API, 1,000 searches/month. |
+| `SEARCH_BACKEND` = `gemini` | Gemini `google_search` | — | Requires billing enabled on your Google Cloud project. |
+
+### Choosing a backend
+
+**DuckDuckGo (default)** costs nothing and requires no signup, which makes it the right starting point. Be aware of what it is: there is no DuckDuckGo search API. The well-known Python `ddgs` package isn't an API client either — it POSTs to `lite.duckduckgo.com/lite/` and parses the returned HTML, and `DuckDuckGoSearchProvider` does the same thing in Swift so it can run on the watch with no server in between.
+
+That means:
+
+- **It can break.** HTML markup is not a versioned contract.
+- **It rate-limits** (HTTP 202/403). The provider backs off once and retries. Most reports of heavy throttling come from cloud and CI addresses running bulk queries; a watch on a residential or cellular connection asking a few questions a day is a much lighter pattern, but nothing is guaranteed.
+- **Automated querying is against DuckDuckGo's terms of service.** Fine to judge for your own personal build; worth knowing before shipping it to anyone else.
+
+**Switch to Tavily** if you'd rather have a real API contract than avoid a signup. Drop `TAVILY_API_KEY` into `Secrets.plist` and it takes over automatically — no code change.
+
+Either way a failed search doesn't break the answer: the model is handed an empty result set and replies from its own knowledge.
 
 ### Only searches when it needs to
 
@@ -272,7 +285,8 @@ The free-search landscape collapsed over 2025–26:
 | **DuckDuckGo** | No official web-results API. The Instant Answer endpoint returns reference abstracts, not search results; everything else is an unofficial scraper. |
 | **Brave Search** | Dropped its free tier in Feb 2026 — now $5/month metered credit with a card on file. |
 | **Yandex** | Search API v2 is paid, with registration and quota agreements. |
-| **Tavily** | 1,000 searches/month, forever free, no card. Returns clean extracted text rather than HTML. |
+| **Tavily** | 1,000 searches/month free, account required. Returns clean extracted text rather than HTML. |
+| **DuckDuckGo (keyless)** | No API exists; scraping the lite endpoint works and needs no account, but breaks on markup changes and is against their ToS. |
 
 Because this will keep churning, the backend is a `SearchProvider` protocol — adding Brave or anything else means writing one struct, not touching the Gemini client.
 
@@ -375,7 +389,11 @@ The **Everyday** model in Settings (default `gemini-3.5-flash-lite`) answers eve
 
 ### Does Gemini Watch support web search?
 
-Yes, and without pushing your Gemini key off the free tier. Add a free [Tavily](https://tavily.com) key to `Secrets.plist` and flip **Settings → Web Search**. Gemini decides when a question actually needs the web, so most messages cost no search credit at all. See [Web Search](#web-search).
+Yes, with no setup and without pushing your Gemini key off the free tier. Flip **Settings → Web Search** and it uses a keyless DuckDuckGo backend. Gemini decides when a question actually needs the web, so most messages trigger no search at all. Add a [Tavily](https://tavily.com) key for a more reliable backend. See [Web Search](#web-search).
+
+### Can't I just use the DuckDuckGo Python library?
+
+Not directly — this is a Swift watchOS app with no server, so there's nowhere to run Python. But `ddgs` isn't an API client anyway: there is no DuckDuckGo search API, and the library simply POSTs to `lite.duckduckgo.com/lite/` and parses the HTML. `DuckDuckGoSearchProvider` does the same thing natively in Swift, with the same caveats.
 
 ### Why doesn't it just use Gemini's built-in Google Search grounding?
 

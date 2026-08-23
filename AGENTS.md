@@ -90,10 +90,11 @@ The expected plist keys are:
 
 ```text
 GEMINI_API_KEY      (required)
-TAVILY_API_KEY      (optional — enables external web search)
+TAVILY_API_KEY      (optional — selects the Tavily search backend)
+SEARCH_BACKEND      (optional — forces duckduckgo | tavily | gemini)
 ```
 
-A missing `TAVILY_API_KEY` is a supported configuration, not an error: the app falls back to Gemini's own grounding tool. Keep that fallback intact.
+Only `GEMINI_API_KEY` is required. Web search works with no additional keys via the keyless DuckDuckGo backend, so a `Secrets.plist` containing just the Gemini key is a fully supported configuration — keep it that way.
 
 ## Architecture
 
@@ -129,7 +130,7 @@ Core responsibilities:
 - `QuickAskRouter.swift`: main-actor singleton carrying the pending question from the intent to the UI, mirrored to UserDefaults so a cold launch doesn't lose it.
 - `QuickAskView.swift`: the Action-button answer screen. Streams into its own `ChatViewModel`, renders scrollable text (Digital Crown), and offers Smart / Continue / follow-up chips. Never speaks its result.
 - `MarkdownContent.swift`: shared markdown/code/math renderer used by both `MessageView` and `QuickAskView`.
-- `SearchProvider.swift`: `SearchProvider` protocol, `TavilySearchProvider`, and `SearchBackend.configured()` which resolves a provider from `Secrets.plist`.
+- `SearchProvider.swift`: `SearchProvider` protocol, `DuckDuckGoSearchProvider` (keyless HTML scrape of the lite endpoint), `TavilySearchProvider` (JSON API), and `SearchBackend.configured()` which resolves a provider from `Secrets.plist`.
 - `VoiceRecorder.swift`: `AVAudioRecorder` capture at 16 kHz mono PCM with meter-driven auto-stop. Publishes `state` and a normalised `level` for the mic UI; writes to `temporaryDirectory` and deletes after upload.
 
 ## Data Flow
@@ -240,6 +241,8 @@ Web search:
 - Keep the tool-calling loop bounded by `maxToolRounds`. Each extra round is another round trip and another search credit.
 - A failed search must not sink the answer: `GeminiService` feeds the model an empty result set and lets it reply anyway. Preserve that.
 - Adding a backend means writing one `SearchProvider` conforming struct plus a branch in `SearchBackend.configured()` — do not spread provider specifics into `GeminiService` or `ChatViewModel`.
+- Search must keep working with no key configured. `DuckDuckGoSearchProvider` is the zero-setup default; do not make any backend that needs an account or payment details the fallback.
+- `DuckDuckGoSearchProvider` parses HTML from `lite.duckduckgo.com/lite/` because no DuckDuckGo search API exists. Expect to fix its regexes when the markup changes — that is inherent to the approach, not a defect to redesign around. Keep the single backoff retry on 202/403/429 and the realistic `User-Agent`; both are load-bearing.
 - Search results reuse `GroundingSource`, so the existing citations UI works for both backends. Keep mapping to it rather than introducing a parallel type.
 - `.reset` exists because a model may emit preamble text before deciding to call the tool. Consumers must drop what they've accumulated when they see it, or the preamble gets concatenated onto the real answer.
 
