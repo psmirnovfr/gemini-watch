@@ -4,6 +4,11 @@
 
 This file gives coding agents the project-specific context needed to work on Gemini Watch safely and consistently. Read it before making changes.
 
+`CLAUDE.md` is the short entry point (Claude Code loads it automatically) and
+lists the invariants; this file is the detail behind them. `BUILDING.md` covers
+Xcode setup and what still needs verifying on hardware. Keep the invariant list
+in `CLAUDE.md` consistent with the reasoning here if either changes.
+
 Gemini Watch is a standalone watchOS SwiftUI app that talks directly to the Google Gemini API. It has no iPhone companion app, no server, no third-party package manager, and no analytics SDK. Keep changes small, native, and watch-first.
 
 ## Repository Layout
@@ -11,6 +16,7 @@ Gemini Watch is a standalone watchOS SwiftUI app that talks directly to the Goog
 ```text
 .
 ├── README.md
+├── CLAUDE.md
 ├── BUILDING.md
 ├── AGENTS.md
 ├── LICENSE

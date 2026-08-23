@@ -4,8 +4,9 @@ Everything in this repo was written without a macOS toolchain — **none of it h
 been compiled or run.** This file exists so the first Xcode session doesn't have
 to rediscover what's here, and knows where the risk is concentrated.
 
-Read [AGENTS.md](AGENTS.md) for architecture and the rules a change should
-respect. This file is about getting it to build, and proving it works.
+Read [CLAUDE.md](CLAUDE.md) for the invariants and [AGENTS.md](AGENTS.md) for
+architecture and the rules a change should respect. This file is about getting
+it to build, and proving it works.
 
 ---
 
