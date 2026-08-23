@@ -1,0 +1,8 @@
+// Copy to Local.xcconfig (same directory) and fill in. Local.xcconfig is
+// git-ignored — nothing here ends up in the repository.
+//
+// Find your Team ID at https://developer.apple.com/account under Membership,
+// or in Xcode under Settings > Accounts.
+
+DEV_TEAM_ID = ABCDE12345
+BUNDLE_ID_PREFIX = com.yourname

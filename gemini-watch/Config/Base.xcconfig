@@ -1,0 +1,18 @@
+// Committed. Provides safe defaults, then pulls in your untracked local file.
+//
+// Everything developer-specific lives in Config/Local.xcconfig, which is
+// git-ignored. Copy Local.xcconfig.example to Local.xcconfig and fill it in.
+//
+// Note: `//` starts a comment in xcconfig, so values must not contain it.
+
+// Your Apple Developer Team ID. Empty is fine for simulator builds; Xcode will
+// prompt for a team on a device build.
+DEV_TEAM_ID =
+
+// Reverse-DNS prefix you control. The bundle identifiers are built from this,
+// so it must be a namespace your signing team owns.
+BUNDLE_ID_PREFIX = com.example
+
+// Optional include — the build still works when Local.xcconfig doesn't exist,
+// which is what keeps a fresh clone buildable for the simulator.
+#include? "Local.xcconfig"

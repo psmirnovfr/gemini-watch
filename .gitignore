@@ -68,5 +68,7 @@ fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 
-# SECRETS
+# SECRETS — both files a developer creates locally
 Secrets.plist
+Config/Local.xcconfig
+**/Config/Local.xcconfig

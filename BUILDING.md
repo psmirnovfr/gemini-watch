@@ -23,10 +23,29 @@ No package manager. No SPM/CocoaPods dependencies. Nothing to install.
 
 ---
 
-## 2. Secrets
+## 2. Local configuration
 
-Create `gemini-watch/gemini-watch Watch App/Secrets.plist` (git-ignored) from
-`Secrets.plist.example`:
+Two files, both git-ignored, both created from a committed `.example`. Nothing
+developer-specific lives in tracked source — a fresh clone has no team ID, no
+bundle prefix, and no keys.
+
+### `gemini-watch/Config/Local.xcconfig` — build settings
+
+Copy from `Local.xcconfig.example`:
+
+```
+DEV_TEAM_ID = ABCDE12345      // Xcode > Settings > Accounts, or developer.apple.com
+BUNDLE_ID_PREFIX = com.yourname
+```
+
+`Config/Base.xcconfig` is committed, supplies defaults, and pulls this in with
+an **optional** `#include?` — so a fresh clone still builds for the simulator
+with no local file at all. Device builds need a real `DEV_TEAM_ID` and a
+`BUNDLE_ID_PREFIX` your team owns.
+
+### `gemini-watch/gemini-watch Watch App/Secrets.plist` — API keys
+
+Copy from `Secrets.plist.example`:
 
 ```
 GEMINI_API_KEY   required — https://aistudio.google.com/app/apikey
@@ -37,7 +56,13 @@ Add it to the **gemini-watch Watch App** target when Xcode asks. If the app
 launches and every message errors with "No API key found", the file exists but
 isn't in the target's Copy Bundle Resources phase.
 
-**Do not commit it.** `.gitignore` already covers it.
+These stay separate on purpose: `.xcconfig` feeds the *build* (signing,
+identifiers) and is read by Xcode; `Secrets.plist` is bundled and read at
+*runtime* by `GeminiService` and `SearchBackend`. Routing keys through the
+xcconfig would mean pushing them into `Info.plist`, which is the same exposure
+in the shipped app for an extra moving part.
+
+**Do not commit either.** `.gitignore` covers both.
 
 ---
 
@@ -49,19 +74,18 @@ open gemini-watch/gemini-watch.xcodeproj
 
 Select the **gemini-watch Watch App** scheme, pick a watchOS simulator, ⌘R.
 
-**Signing and identity.** This project began as a fork, and both the signing
-team and the bundle identifiers were inherited from the upstream author. Both
-have been reset:
+**Signing and identity** come entirely from `Config/Local.xcconfig` (see
+section 2). The project file only references the variables:
 
-- `DEVELOPMENT_TEAM` is empty, so the repo isn't tied to any one Apple developer
-  account. On first build Xcode asks you to pick your team under **Signing &
-  Capabilities** (automatic signing), and stores the choice in git-ignored
-  `xcuserdata/` — local only, never a diff. Simulator builds need no team.
-- `PRODUCT_BUNDLE_IDENTIFIER` is `psmirnovfr.gemini-watch[.watchkitapp]`.
+```
+DEVELOPMENT_TEAM          = $(DEV_TEAM_ID)
+PRODUCT_BUNDLE_IDENTIFIER = $(BUNDLE_ID_PREFIX).gemini-watch[.watchkitapp]
+```
 
-**If you fork this**, change the bundle identifiers to a namespace you control
-before building to a device — two apps can't share one, and you can't sign
-someone else's namespace with your team.
+So forking costs one file, not a hunt through `project.pbxproj` — and a signing
+change never shows up as a diff. If Xcode complains about signing, check
+`Local.xcconfig` exists and `DEV_TEAM_ID` is right, rather than editing target
+settings in the UI (that would write the value back into tracked source).
 
 The project uses a **file-system synchronized root group**, so the Swift files
 added over this project's history should be picked up automatically. If any are

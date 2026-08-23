@@ -22,6 +22,9 @@ Gemini Watch is a standalone watchOS SwiftUI app that talks directly to the Goog
 ├── LICENSE
 ├── .gitignore
 └── gemini-watch/
+    ├── Config/
+    │   ├── Base.xcconfig
+    │   └── Local.xcconfig.example
     ├── gemini-watch.xcodeproj/
     └── gemini-watch Watch App/
         ├── AppSettingsStore.swift
@@ -93,6 +96,19 @@ The Gemini API key is loaded from `Secrets.plist` in the app bundle.
 - `.gitignore` already excludes `Secrets.plist`.
 - Do not add fallback keys, sample real keys, logging of keys, or hard-coded API credentials.
 - If API-key handling changes, preserve a clear missing-key error path for users.
+
+Build-time developer settings live in `gemini-watch/Config/Local.xcconfig`
+(git-ignored, template at `Local.xcconfig.example`). `Base.xcconfig` is
+committed, holds defaults, and pulls the local file in via an optional
+`#include?` so a fresh clone still builds for the simulator.
+
+- `project.pbxproj` must keep referencing `$(DEV_TEAM_ID)` and
+  `$(BUNDLE_ID_PREFIX)`. Do not let a literal team ID or bundle identifier get
+  written back into it — changing signing through Xcode's UI will try to.
+- Runtime secrets stay in `Secrets.plist`; build settings stay in the xcconfig.
+  Do not merge them: routing keys through the xcconfig means pushing them into
+  `Info.plist`, which is identical exposure in the shipped app for an extra
+  mechanism.
 
 The expected plist keys are:
 

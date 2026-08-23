@@ -69,8 +69,12 @@ The whole design exists to keep a free-tier key viable. Know what a change costs
 - Source lives in `gemini-watch/gemini-watch Watch App/`. The Xcode project uses
   a file-system synchronized root group, so new files are usually picked up
   without editing `project.pbxproj`.
-- Secrets come from `Secrets.plist` (git-ignored). Never commit it, never add a
-  fallback key, never log a key.
+- Two git-ignored local files, both with committed `.example` templates:
+  `Secrets.plist` (API keys, read at runtime) and `Config/Local.xcconfig`
+  (`DEV_TEAM_ID`, `BUNDLE_ID_PREFIX`, read at build time). Never commit either,
+  never add a fallback key, never log a key, and never write a team ID or
+  bundle identifier back into `project.pbxproj` — it references the xcconfig
+  variables so developer-specific values stay out of tracked source.
 - No test target, and adding one would mean a build dependency this project has
   deliberately avoided. Verification is the checklist in BUILDING.md.
 - Don't stage `.DS_Store`, `xcuserdata/`, or build products — `.gitignore`
