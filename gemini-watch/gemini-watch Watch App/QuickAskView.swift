@@ -224,9 +224,10 @@ struct QuickAskView: View {
         } else if viewModel.isLoading {
             HStack(spacing: 6) {
                 ProgressView().scaleEffect(0.7)
-                Text("Thinking…")
+                Text(viewModel.searchQuery.map { "Searching “\($0)”…" } ?? "Thinking…")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
             .padding(.vertical, 6)
         }

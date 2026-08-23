@@ -17,20 +17,27 @@ class ChatViewModel: ObservableObject {
     /// Model that produced the newest reply, so the UI can badge it and decide
     /// whether escalating to the smart model would actually change anything.
     @Published var lastResponseModel: String? = nil
+    /// The query Gemini chose to search for, while that search is running.
+    @Published var searchQuery: String? = nil
 
     private let geminiService: GeminiService
     private let persistence: PersistenceManager
     private var streamTask: Task<Void, Never>?
+    /// Nil when no external search key is configured, in which case the service
+    /// falls back to Gemini's own grounding tool.
+    private let searchProvider: SearchProvider?
 
     /// Injected settings store — avoids repeated disk reads on every request (#5).
     private weak var settingsStore: AppSettingsStore?
 
     init(geminiService: GeminiService = GeminiService(),
          persistence: PersistenceManager = PersistenceManager.shared,
-         settingsStore: AppSettingsStore? = nil) {
+         settingsStore: AppSettingsStore? = nil,
+         searchProvider: SearchProvider? = SearchBackend.configured()) {
         self.geminiService = geminiService
         self.persistence = persistence
         self.settingsStore = settingsStore
+        self.searchProvider = searchProvider
     }
 
     /// Called from ContentView.onAppear after the view environment is available.
@@ -57,6 +64,7 @@ class ChatViewModel: ObservableObject {
         isLoading = false
         suggestions = []
         streamingMessageId = nil
+        searchQuery = nil
         lastResponseModel = messages.last(where: { $0.role == .model })?.modelName
     }
 
@@ -93,6 +101,7 @@ class ChatViewModel: ObservableObject {
         editingMessageId = nil
         suggestions = []
         streamingMessageId = nil
+        searchQuery = nil
         lastResponseModel = nil
         voiceMessageId = nil
         messages = []
@@ -111,6 +120,7 @@ class ChatViewModel: ObservableObject {
         editingMessageId = nil
         suggestions = []
         streamingMessageId = nil
+        searchQuery = nil
         lastResponseModel = nil
 
         let newConvo = Conversation()
@@ -166,6 +176,7 @@ class ChatViewModel: ObservableObject {
         streamTask = nil
         isLoading = false
         streamingMessageId = nil
+        searchQuery = nil
         // A stopped stream still leaves a usable partial reply, so record which
         // model produced it — otherwise "Smart" can't tell it has work to do.
         lastResponseModel = messages.last(where: { $0.role == .model })?.modelName
@@ -288,7 +299,8 @@ class ChatViewModel: ObservableObject {
                     systemPrompt: systemPrompt,
                     temperature: settings.temperature,
                     enableWebSearch: settings.webSearchEnabled,
-                    audio: audio
+                    audio: audio,
+                    searchProvider: searchProvider
                 )
                 for try await event in stream {
                     if Task.isCancelled { return }
@@ -300,7 +312,22 @@ class ChatViewModel: ObservableObject {
                             messages[idx].sources = sources
                         }
 
+                    case .searching(let query):
+                        searchQuery = query
+                        isLoading = true
+
+                    case .reset:
+                        // Preamble the model wrote before deciding to search.
+                        fullResponse = ""
+                        transcriptBuffer = ""
+                        if let idx = messageIndex {
+                            messages.remove(at: idx)
+                            messageIndex = nil
+                            streamingMessageId = nil
+                        }
+
                     case .text(let chunk):
+                        searchQuery = nil
                         if !transcriptResolved {
                             transcriptBuffer += chunk
                             if let newline = transcriptBuffer.firstIndex(of: "\n") {
@@ -378,6 +405,7 @@ class ChatViewModel: ObservableObject {
                 }
 
                 streamingMessageId = nil
+                searchQuery = nil
                 isLoading = false
                 persistCurrentState()
 
@@ -398,6 +426,7 @@ class ChatViewModel: ObservableObject {
                 }
             } catch {
                 streamingMessageId = nil
+                searchQuery = nil
                 // Don't strand a voice turn behind an empty user bubble — a
                 // failed upload must still leave something retryable on screen.
                 if !transcriptResolved {

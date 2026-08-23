@@ -106,7 +106,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading, spacing: 1) {
                             Text("Web Search")
                                 .font(.caption2)
-                            Text("Grounded answers with sources")
+                            Text(searchBackendLabel)
                                 .font(.system(size: 8))
                                 .foregroundStyle(.tertiary)
                         }
@@ -158,6 +158,15 @@ struct SettingsView: View {
                 await fetchModels()
             }
         }
+    }
+
+    /// Makes the active backend visible — the two differ in who pays and how
+    /// much quota there is, so it shouldn't be a mystery which one is wired up.
+    private var searchBackendLabel: String {
+        if let provider = SearchBackend.configured() {
+            return "Via \(provider.name) · Gemini stays free tier"
+        }
+        return "Gemini grounding · needs billing enabled"
     }
 
     private var speedLabel: String {

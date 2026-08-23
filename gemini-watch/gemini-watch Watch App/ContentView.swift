@@ -66,9 +66,16 @@ struct ContentView: View {
                             HStack(spacing: 6) {
                                 ProgressView()
                                     .scaleEffect(0.7)
-                                Text("Thinking…")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
+                                if let query = viewModel.searchQuery {
+                                    Text("Searching “\(query)”…")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                } else {
+                                    Text("Thinking…")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
                                 Spacer()
                             }
                             .padding(.horizontal, 6)

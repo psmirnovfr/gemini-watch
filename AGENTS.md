@@ -22,6 +22,7 @@ Gemini Watch is a standalone watchOS SwiftUI app that talks directly to the Goog
         ├── MarkdownContent.swift
         ├── QuickAskRouter.swift
         ├── QuickAskView.swift
+        ├── SearchProvider.swift
         ├── VoiceRecorder.swift
         ├── ChatViewModel.swift
         ├── ContentView.swift
@@ -85,11 +86,14 @@ The Gemini API key is loaded from `Secrets.plist` in the app bundle.
 - Do not add fallback keys, sample real keys, logging of keys, or hard-coded API credentials.
 - If API-key handling changes, preserve a clear missing-key error path for users.
 
-The expected plist key is:
+The expected plist keys are:
 
 ```text
-GEMINI_API_KEY
+GEMINI_API_KEY      (required)
+TAVILY_API_KEY      (optional — enables external web search)
 ```
+
+A missing `TAVILY_API_KEY` is a supported configuration, not an error: the app falls back to Gemini's own grounding tool. Keep that fallback intact.
 
 ## Architecture
 
@@ -125,6 +129,7 @@ Core responsibilities:
 - `QuickAskRouter.swift`: main-actor singleton carrying the pending question from the intent to the UI, mirrored to UserDefaults so a cold launch doesn't lose it.
 - `QuickAskView.swift`: the Action-button answer screen. Streams into its own `ChatViewModel`, renders scrollable text (Digital Crown), and offers Smart / Continue / follow-up chips. Never speaks its result.
 - `MarkdownContent.swift`: shared markdown/code/math renderer used by both `MessageView` and `QuickAskView`.
+- `SearchProvider.swift`: `SearchProvider` protocol, `TavilySearchProvider`, and `SearchBackend.configured()` which resolves a provider from `Secrets.plist`.
 - `VoiceRecorder.swift`: `AVAudioRecorder` capture at 16 kHz mono PCM with meter-driven auto-stop. Publishes `state` and a normalised `level` for the mic UI; writes to `temporaryDirectory` and deletes after upload.
 
 ## Data Flow
@@ -152,7 +157,7 @@ Gemini request details:
 - Streaming endpoint uses `:streamGenerateContent?alt=sse`.
 - The API key is sent in `x-goog-api-key`.
 - The service trims context to the last 20 messages, removes leading model messages, and collapses adjacent same-role messages to preserve Gemini's expected user/model alternation.
-- Web search grounding is opt-in through Settings and maps to Gemini's `google_search` tool.
+- Web search is opt-in through Settings and has two backends. With a search key in `Secrets.plist`, a `web_search` function declaration is sent and `GeminiService` runs a tool-calling loop; without one, it falls back to Gemini's `google_search` grounding tool.
 
 ## Coding Guidelines
 
@@ -228,6 +233,16 @@ App Intents / Shortcuts (Action button flow):
 - The transcript parser must stay fail-open: if the model ignores the format, every token still has to reach the answer. Keep the give-up length and the end-of-stream flush.
 - Both the intent and the view must be re-entry safe. `QuickAskView.onAppear` is guarded by `didStart`, and `QuickAskRouter.markDelivered()` drops the persisted copy so a cold launch never replays an answered question. Every unguarded path costs the user a real API request.
 
+Web search:
+
+- Search exists as an external provider specifically to keep the Gemini key on the **free tier**. Gemini's `google_search` grounding has a free allowance only on billing-enabled projects, and enabling billing would start charging per token on every ordinary message. Do not "simplify" this by switching the default to `google_search` — that quietly moves the user onto the paid tier.
+- Search must stay **model-decided**, via the `web_search` function declaration. Never search unconditionally on every message: the free tier is 1,000 searches/month and most questions need none. Function calling itself is free, so a message that doesn't search costs what it always did.
+- Keep the tool-calling loop bounded by `maxToolRounds`. Each extra round is another round trip and another search credit.
+- A failed search must not sink the answer: `GeminiService` feeds the model an empty result set and lets it reply anyway. Preserve that.
+- Adding a backend means writing one `SearchProvider` conforming struct plus a branch in `SearchBackend.configured()` — do not spread provider specifics into `GeminiService` or `ChatViewModel`.
+- Search results reuse `GroundingSource`, so the existing citations UI works for both backends. Keep mapping to it rather than introducing a parallel type.
+- `.reset` exists because a model may emit preamble text before deciding to call the tool. Consumers must drop what they've accumulated when they see it, or the preamble gets concatenated onto the real answer.
+
 Model tiers:
 
 - `AppSettings.modelName` is the cheap everyday model (one request per message); `AppSettings.smartModelName` is the escalation model, used only when the user taps Smart.
@@ -278,7 +293,9 @@ Preferred validation:
    - settings persist across relaunch
    - conversations persist and can be deleted
    - model picker failure is handled gracefully
-   - web-search sources display when enabled and returned
+   - with a search key set, a current-events question triggers one search (the query is shown), sources appear, and an everyday question triggers none
+   - with no search key set, Web Search still falls back to Gemini grounding rather than erroring
+   - a failing search key still produces an answer instead of a dead end
    - TTS starts and stops for model messages
    - Ask Gemini shortcut with an empty Question opens straight into the mic, stops on its own when you stop talking, and streams transcript-then-answer
    - Ask Gemini shortcut with Dictate Text supplying the Question skips recording entirely and sends text only

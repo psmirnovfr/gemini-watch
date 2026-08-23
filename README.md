@@ -22,6 +22,7 @@
 - [Getting a Google Gemini API Key](#getting-a-google-gemini-api-key)
 - [Usage Guide](#usage-guide)
 - [Action Button Setup (Apple Watch Ultra)](#action-button-setup-apple-watch-ultra)
+- [Web Search](#web-search)
 - [Architecture](#architecture)
 - [Privacy & Data Handling](#privacy--data-handling)
 - [FAQ](#faq)
@@ -43,7 +44,7 @@ If you're looking for a **native Apple Watch Gemini client**, a **lightweight LL
 - **Real-time Streaming Chat** — Tokens appear as Gemini generates them, with an animated typing cursor. Built on Server-Sent Events (SSE) from the Gemini streaming endpoint.
 - **Full Conversation History** — Every chat is saved as an individual JSON file on the watch and browsable from a scrollable list. Swipe any conversation to delete it; pin important chats to the top.
 - **Message Editing & Regeneration** — Long-press any user message to edit it and regenerate Gemini's reply from that point.
-- **Web Search Grounding** — Enable Gemini's `google_search` tool from Settings to get grounded answers with inline citations and source links.
+- **Web Search That Keeps You On The Free Tier** — Gemini decides when a question needs the web, then the app runs the search through a pluggable provider (Tavily by default, free, no card) and feeds results back. Citations and source links included. Falls back to Gemini's built-in `google_search` grounding if you'd rather enable billing. See [Web Search](#web-search).
 - **Context-Aware Quick Replies** — Smart suggestion chips appear after each response, tailored to the content (code, lists, follow-up questions, or general conversation). Toggleable from Settings.
 - **Markdown & LaTeX Rendering** — Code blocks with language labels, bold and italic text, inline math (`$…$`) and block math (`$$…$$`), powered by a pre-compiled regex parser with result caching for smooth scrolling.
 - **Text-to-Speech** — Tap any Gemini response to hear it spoken aloud via `AVSpeechSynthesizer`, with a Slow / Normal / Fast speech-rate slider.
@@ -149,7 +150,7 @@ Open **Settings** from the conversation list to configure:
 | **Creativity** | Maps to the Gemini `temperature` parameter (0.0–1.0). Labels: Precise, Balanced, Creative, Wild. Includes a **Reset to Default** button (0.7). |
 | **Haptics** | Toggle haptic feedback on interactions. |
 | **Quick Replies** | Toggle the context-aware suggestion chips that appear after each response. |
-| **Web Search** | Toggle grounded answers with citations via Gemini's `google_search` tool. |
+| **Web Search** | Toggle web-grounded answers with citations. Uses your configured search provider, or Gemini's `google_search` grounding if no search key is set. |
 | **System Prompt** | Multiline editor for the assistant's persona and instructions. Includes a **Reset to Default** button. |
 | **Clear All Chats** | Danger-zone action with a confirmation dialog — permanently deletes every saved conversation from the watch. |
 
@@ -235,6 +236,48 @@ The Action button flow uses the same `Secrets.plist` / `GEMINI_API_KEY` setup as
 
 ---
 
+## Web Search
+
+Gemini has a built-in `google_search` grounding tool, and it's the nicer integration — but its free allowance is attached to **billing-enabled** projects. Turning on billing to get it moves your whole project off the Gemini free tier, so you'd start paying per token on *every ordinary chat message* to make one feature free. Bad trade for a personal watch app.
+
+So search runs through an external provider instead, and the Gemini key stays on the free tier.
+
+### Setup
+
+1. Get a free API key from [Tavily](https://tavily.com) — 1,000 searches/month, **no credit card**.
+2. Add it to `Secrets.plist` as `TAVILY_API_KEY` (see `Secrets.plist.example`).
+3. Turn on **Settings → Web Search**.
+
+Settings shows which backend is live, so it's never ambiguous:
+
+| `Secrets.plist` contains | Backend used | Cost |
+|---|---|---|
+| `TAVILY_API_KEY` | Tavily, via function calling | Free — Gemini stays on free tier |
+| *(no search key)* | Gemini `google_search` grounding | Requires billing enabled |
+
+### Only searches when it needs to
+
+The app doesn't search on every message. It declares `web_search` as a **function-calling tool** and lets Gemini decide — most questions never trigger it, so 1,000 searches/month goes a long way. When Gemini does call it, you see the query it chose (`Searching "…"`) before the answer streams.
+
+Function calling itself is free, so a message that doesn't need the web costs exactly what it did before.
+
+### Why not Google / Bing / DuckDuckGo / Yandex?
+
+The free-search landscape collapsed over 2025–26:
+
+| Provider | Status (Aug 2026) |
+|---|---|
+| **Bing Web Search API** | Retired 11 Aug 2025. No Microsoft drop-in replacement. |
+| **Google Custom Search JSON** | 100/day free, but closed to new signups and shutting down 1 Jan 2027. |
+| **DuckDuckGo** | No official web-results API. The Instant Answer endpoint returns reference abstracts, not search results; everything else is an unofficial scraper. |
+| **Brave Search** | Dropped its free tier in Feb 2026 — now $5/month metered credit with a card on file. |
+| **Yandex** | Search API v2 is paid, with registration and quota agreements. |
+| **Tavily** | 1,000 searches/month, forever free, no card. Returns clean extracted text rather than HTML. |
+
+Because this will keep churning, the backend is a `SearchProvider` protocol — adding Brave or anything else means writing one struct, not touching the Gemini client.
+
+---
+
 ## Architecture
 
 Gemini Watch follows a lean MVVM architecture built entirely in SwiftUI. There is no Core Data, no Combine-heavy plumbing, and no third-party dependencies — just `URLSession`, `FileManager`, and `AVFoundation`.
@@ -259,6 +302,7 @@ Gemini Watch follows a lean MVVM architecture built entirely in SwiftUI. There i
 | `QuickAskView.swift` | The post-Action-button screen — streaming answer, crown scrolling, Smart / Continue / follow-up buttons. |
 | `MarkdownContent.swift` | Shared markdown/code/math renderer used by both `MessageView` and `QuickAskView`. |
 | `VoiceRecorder.swift` | Mic capture with level-based auto-stop, producing 16 kHz mono WAV for Gemini. |
+| `SearchProvider.swift` | `SearchProvider` protocol, the Tavily implementation, and key-based backend resolution. |
 
 ### Data flow
 
@@ -331,7 +375,11 @@ The **Everyday** model in Settings (default `gemini-3.5-flash-lite`) answers eve
 
 ### Does Gemini Watch support web search?
 
-Yes. Flip the **Web Search** toggle in Settings to enable Gemini's `google_search` grounding tool. Responses that use web results include inline citations with source URLs.
+Yes, and without pushing your Gemini key off the free tier. Add a free [Tavily](https://tavily.com) key to `Secrets.plist` and flip **Settings → Web Search**. Gemini decides when a question actually needs the web, so most messages cost no search credit at all. See [Web Search](#web-search).
+
+### Why doesn't it just use Gemini's built-in Google Search grounding?
+
+Because the free grounding allowance is tied to billing-enabled projects. Enabling billing to unlock it would move the whole project onto the paid tier and start charging per token on every ordinary message — paying for the other 95% of your usage to make one feature free.
 
 ### Can I tune how creative the responses are?
 
